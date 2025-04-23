@@ -1,0 +1,658 @@
+---
+title: "Figure_3"
+author: "Marvin"
+date: "2024-10-07"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+plot_dir = "/g/furlong/project/92_SPT4_SPT5/Manuscript/Figures/Figure_3/"
+```
+
+
+```{r figure_3_B_viability_control, comment=NA, echo=FALSE, message=FALSE, fig.height = 6, fig.width = 7}
+library(ggplot2)
+library(dplyr)
+
+BL_controls = read.table("/g/furlong/project/92_SPT4_SPT5/Viability_assays/viability_assay_SPT5_WE_yw_ctrl.txt")
+
+BL_controls$mean <- rowMeans(BL_controls[, -1])
+BL_controls$sd <- apply(BL_controls[, -1], 1, sd)
+
+BL_controls_long <- BL_controls %>%
+  select(V1, mean, sd) %>%
+  rename(Time = V1, Mean = mean, SD = sd) %>%
+  mutate(Condition = "BL_controls") 
+
+
+BL_controls_long$Time <- factor(BL_controls_long$Time, 
+                                levels = c("yw_DARK", "yw_BL_WE", "DARK", "BL_WE"))
+
+# t-Tests 
+yw_DARK_values <- c(BL_controls$V2[1], BL_controls$V3[1], BL_controls$V4[1])
+yw_BL_WE_values <- c(BL_controls$V2[2], BL_controls$V3[2], BL_controls$V4[2])
+test1 <- t.test(yw_DARK_values, yw_BL_WE_values)
+p_value1 <- test1$p.value
+
+DARK_values <- c(BL_controls$V2[3], BL_controls$V3[3], BL_controls$V4[3])
+BL_WE_values <- c(BL_controls$V2[4], BL_controls$V3[4], BL_controls$V4[4])
+test2 <- t.test(DARK_values, BL_WE_values)
+p_value2 <- test2$p.value
+
+# format p-values
+formatted_p_value1 <- sprintf("%.2e", p_value1)
+formatted_p_value2 <- sprintf("%.2e", p_value2)
+
+# Manuel adaption for better grouping in plot
+BL_controls_long <- BL_controls_long %>%
+  mutate(
+    Group = ifelse(Time %in% c("yw_DARK", "yw_BL_WE"), "Group1", "Group2"),
+    x_pos = case_when(
+      Time == "yw_DARK" ~ 1,
+      Time == "yw_BL_WE" ~ 1.5,
+      Time == "DARK" ~ 2.2,
+      Time == "BL_WE" ~ 2.7
+    )
+  )
+
+
+barplot_BL_controls <- ggplot(BL_controls_long, aes(x = x_pos, y = Mean, fill = Time)) +
+  geom_bar(stat = "identity", width = 0.4) +
+  geom_errorbar(aes(ymin = Mean - SD, ymax = Mean + SD), 
+                color = "black", width = 0.2) +
+  scale_fill_manual(values = c("yw_DARK" = "gray", 
+                               "yw_BL_WE" = "#87CEEB", 
+                               "DARK" = "gray", 
+                               "BL_WE" = "#87CEEB")) +
+  theme_classic() +
+  theme(
+    text = element_text(size = 18, face = "plain"),
+    axis.title = element_text(size = 16, face = "plain"),
+    axis.text = element_text(size = 14, face = "plain"),
+    panel.background = element_rect(fill = "white"),
+    axis.ticks.x = element_blank(),
+    axis.text.x = element_blank()
+  ) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, by = 20)) +
+
+  
+  geom_rect(aes(xmin = 1, xmax = 1.5, ymin = max(BL_controls_long$Mean) + 4, ymax = max(BL_controls_long$Mean) + 4.5), 
+            fill = "black", alpha = 0.5) +  
+  geom_linerange(aes(x = 1, ymin = max(BL_controls_long$Mean) + 3.6, ymax = max(BL_controls_long$Mean) + 5), 
+                 color = "black", size = 1) + 
+  geom_linerange(aes(x = 1.5, ymin = max(BL_controls_long$Mean) + 3.6, ymax = max(BL_controls_long$Mean) + 5), 
+                 color = "black", size = 1) +  
+  
+  geom_rect(aes(xmin = 2.2, xmax = 2.7, ymin = max(BL_controls_long$Mean) + 4, ymax = max(BL_controls_long$Mean) + 4.5), 
+            fill = "black", alpha = 0.5)  + 
+  geom_linerange(aes(x = 2.2, ymin = max(BL_controls_long$Mean) + 3.6, ymax = max(BL_controls_long$Mean) + 5), 
+                 color = "black", size = 1) +  
+  geom_linerange(aes(x = 2.7, ymin = max(BL_controls_long$Mean) + 3.6, ymax = max(BL_controls_long$Mean) + 5), 
+                 color = "black", size = 1) +  
+  
+  labs(x = "Condition", y = "embryo viability [%]", fill = "Condition") +
+  geom_text(aes(x = 1.25, y = max(BL_controls_long$Mean) + 5, label = formatted_p_value1), size = 6, vjust = 0) +  
+  geom_text(aes(x = 2.45, y = max(BL_controls_long$Mean) + 5, label = formatted_p_value2), size = 6, vjust = 0) +
+  scale_x_continuous(breaks = c(1, 1.5, 2, 2.5), labels = c("yw_DARK", "yw_BL_WE", "DARK", "BL_WE"))
+
+# Plot speichern
+ggsave(
+  filename = paste0(plot_dir, "Figure_3_B_viability_controls.pdf"),
+  plot = barplot_BL_controls,
+  width = 10,
+  height = 8
+)
+
+```
+
+
+
+```{r figure_3_E_viability_on_off, comment=NA, echo=FALSE, message=FALSE, fig.height = 6, fig.width = 7}
+library(ggplot2)
+library(cowplot)
+library(dplyr)
+library(tidyr)
+
+### Data Import
+BL_off_on <- read.table("/g/furlong/project/92_SPT4_SPT5/Viability_assays/viability_assay_SPT_LONG.txt")
+BL_on_off <- read.table("/g/furlong/project/92_SPT4_SPT5/Viability_assays/viability_assay_SPT_LONG_opposite.txt")
+
+# Recode the time points
+BL_off_on$V1 <- recode(BL_off_on$V1, "DARK" = 0, "from_1h" = 1, "from_4h" = 4, "from_8h" = 8, "from_12h" = 12, "from_16h" = 16, "from_20h" = 20)
+BL_on_off$V1 <- recode(BL_on_off$V1, "DARK" = 0, "until_4h" = 4, "until_8h" = 8, "until_12h" = 12, "until_16h" = 16, "until_20h" = 20)
+
+# Calculate means and SDs
+BL_off_on <- BL_off_on %>%
+  mutate(mean_2 = rowMeans(.[, -1]), sd_2 = apply(.[, -1], 1, sd))
+
+BL_on_off <- BL_on_off %>%
+  mutate(mean_3 = rowMeans(.[, -1]), sd_3 = apply(.[, -1], 1, sd))
+
+# Combine the datasets
+BL_combined <- merge(BL_off_on[, c("V1", "mean_2", "sd_2")], 
+                     BL_on_off[, c("V1", "mean_3", "sd_3")], 
+                     by = "V1", 
+                     all = TRUE)
+
+# Rename columns for clarity
+colnames(BL_combined) <- c("Time", "mean_Off_On", "sd_Off_On", "mean_On_Off", "sd_On_Off")
+
+# change df to long format
+BL_combined_long <- BL_combined %>%
+  pivot_longer(cols = c(mean_Off_On, sd_Off_On, mean_On_Off, sd_On_Off), 
+               names_to = c("Type", "Condition"), 
+               names_sep = "_") %>%
+  pivot_wider(names_from = Type, values_from = value)
+
+BL_combined_long <- BL_combined %>%
+  pivot_longer(cols = c(mean_Off_On, sd_Off_On, mean_On_Off, sd_On_Off), 
+               values_to = "value") %>%
+  mutate(Type = gsub("^(mean|sd)_(.*)$", "\\1_\\2", name)) %>%
+  mutate(Condition = gsub("^(mean|sd)_(.*)$", "\\2", name)) %>%
+  select(-name) %>%
+  pivot_wider(names_from = Type, values_from = value)
+
+# Optional: sort by condition and time
+BL_combined_long <- BL_combined_long %>%
+  arrange(Condition, Time)
+
+
+# calculate p-values for each df and add to final combined df
+add_p_values_to_combined <- function(combined_long, off_on_df, on_off_df) {
+  results_off_on <- data.frame(Time = off_on_df$V1, p_value = NA)
+  results_on_off <- data.frame(Time = on_off_df$V1, p_value = NA)
+  
+  # t-Test für off_on_df
+  for (i in 2:nrow(off_on_df)) {  
+    if (!is.na(off_on_df[i, "V2"]) && !is.na(off_on_df[i, "V3"]) && !is.na(off_on_df[i, "V4"])) {
+      test <- t.test(c(off_on_df[i, "V2"], off_on_df[i, "V3"], off_on_df[i, "V4"]), 
+                     c(off_on_df[off_on_df$V1 == 0, "V2"], 
+                       off_on_df[off_on_df$V1 == 0, "V3"], 
+                       off_on_df[off_on_df$V1 == 0, "V4"]),
+                     na.rm = TRUE) 
+      results_off_on$p_value[i] <- test$p.value
+    }
+  }
+  
+  for (i in 2:nrow(on_off_df)) {  
+    if (!is.na(on_off_df[i, "V2"]) && !is.na(on_off_df[i, "V3"]) && !is.na(on_off_df[i, "V4"])) {
+      test <- t.test(c(on_off_df[i, "V2"], on_off_df[i, "V3"], on_off_df[i, "V4"]), 
+                     c(on_off_df[on_off_df$V1 == 0, "V2"], 
+                       on_off_df[on_off_df$V1 == 0, "V3"], 
+                       on_off_df[on_off_df$V1 == 0, "V4"]),
+                     na.rm = TRUE) 
+      results_on_off$p_value[i] <- test$p.value
+    }
+  }
+  
+  combined_long <- combined_long %>%
+    left_join(results_off_on, by = c("Time" = "Time")) %>%
+    left_join(results_on_off, by = c("Time" = "Time"), suffix = c("_Off_On", "_On_Off")) 
+  
+  return(combined_long)
+}
+
+BL_combined_long <- add_p_values_to_combined(BL_combined_long, BL_off_on, BL_on_off)
+
+# rename/reformate columns
+BL_combined_long_formatted <- data.frame(
+  Time = BL_combined_long$Time,
+  Condition = BL_combined_long$Condition,
+  mean = ifelse(BL_combined_long$Condition == "Off_On", BL_combined_long$mean_Off_On, BL_combined_long$mean_On_Off),
+  sd = ifelse(BL_combined_long$Condition == "Off_On", BL_combined_long$sd_Off_On, BL_combined_long$sd_On_Off),
+  p_value = ifelse(BL_combined_long$Condition == "Off_On", BL_combined_long$p_value_Off_On, BL_combined_long$p_value_On_Off)
+)
+
+
+# Format p-values in scientific notation
+BL_combined_long_formatted <- BL_combined_long_formatted %>%
+  mutate(p_value_label = ifelse(!is.na(p_value), formatC(p_value, format = "e", digits = 2), NA))
+
+# Delete missing datapoint (V1 == 1 and Condition == "mean_Off_On")
+BL_combined_long_formatted <- BL_combined_long_formatted[!(BL_combined_long_formatted$Time == 1 & BL_combined_long_formatted$Condition == "On_Off"), ]
+
+
+BL_combined_long_formatted_scaled <- BL_combined_long_formatted %>%
+  group_by(Condition) %>%
+  mutate(scaling_factor = 100 / mean[Time == 0 & Condition == first(Condition)]) %>%
+  mutate(mean_scaled = mean * scaling_factor)
+
+# Delete DARK datapoint for Off_On
+BL_combined_long_formatted_scaled <- BL_combined_long_formatted_scaled[!(BL_combined_long_formatted_scaled$Time == 0 & BL_combined_long_formatted_scaled$Condition == "Off_On"), ]
+
+BL_combined_long_formatted_scaled$Time[BL_combined_long_formatted_scaled$Time == 0 & BL_combined_long_formatted_scaled$Condition == "On_Off"] <- 1
+
+
+# Plot using BL_combined_long and displaying p-values
+lineplot <- ggplot(BL_combined_long_formatted_scaled, aes(x = factor(Time), y = mean_scaled, fill = Condition)) +
+  geom_line(aes(color = Condition, group = Condition), size = 2) + 
+  geom_point(aes(color = Condition, group = Condition), size = 3) + 
+  geom_errorbar(aes(ymin = mean_scaled - sd, ymax = mean_scaled + sd), color = "black", width = 0.2) +
+  geom_text(aes(label = ifelse(!is.na(p_value), sprintf("%.2e", p_value), ""), y = mean_scaled + sd + 1), 
+            vjust = -0.5, size = 2.5) + 
+  scale_fill_manual(values = c("On_Off" = "#298c8c", "Off_On" = "#f1a226")) +
+  scale_color_manual(values = c("On_Off" = "#298c8c", "Off_On" = "#f1a226")) +
+  theme_classic() +
+  scale_y_continuous(limits = c(0, 110), breaks = seq(0, 100, by = 20)) +
+  labs(x = "Time of light switch (h a.e.I.)", y = "embryo viability [%]", fill = "Condition", color = "Condition")
+
+# Save the plot
+ggsave(filename = paste0(plot_dir, "Figure_3_E_viability_On_Off.pdf"),
+       plot = lineplot, width = 10, height = 8)
+
+```
+
+
+```{r figure_3_F_viability_time_windows, comment=NA, echo=FALSE, message=FALSE, fig.height = 6, fig.width = 7}
+library(dplyr)
+library(ggplot2)
+library(readr)
+
+# Daten einlesen und Vorverarbeitung
+BL_all_time <- read.table("/g/furlong/project/92_SPT4_SPT5/Viability_assays/viability_assay_SPT5.txt")[-2, ] # Entferne WE
+
+# Umkodierung der Zeitpunkte
+BL_all_time$V1 <- recode(BL_all_time$V1,
+                         "DARK" = 0,
+                         "1-4h" = 1,
+                         "4-8h" = 4,
+                         "8-12h" = 8,
+                         "12-16h" = 12,
+                         "16-20h" = 16,
+                         "20-24h" = 20)
+
+# Mittelwerte und Standardabweichungen berechnen
+BL_all_time <- BL_all_time %>%
+  mutate(mean_1 = rowMeans(select(., -V1)),
+         sd_1 = apply(select(., -V1), 1, sd))
+
+# Daten für ggplot umformen
+BL_all_time_long <- BL_all_time %>%
+  select(V1, mean_1, sd_1) %>%
+  rename(Mean = mean_1, SD = sd_1) %>%
+  mutate(Condition = ifelse(V1 == 0, "Dark", "BL_all_time")) # Bedingung hinzufügen
+
+# t-Test durchführen
+mean_first_row <- BL_all_time$mean_1[1]
+t_test_results <- BL_all_time[-1, ] %>%
+  rowwise() %>%
+  mutate(t_test_p_value = t.test(c(V2, V3, V4), mu = mean_first_row)$p.value) %>%
+  ungroup()
+
+# t-Test p-Werte zu den Langdaten hinzufügen
+BL_all_time_long <- BL_all_time_long %>%
+  left_join(t_test_results %>% select(V1, t_test_p_value), by = "V1") %>%
+  mutate(Significance = case_when(
+    t_test_p_value < 0.001 ~ "***",
+    t_test_p_value < 0.01 ~ "**",
+    t_test_p_value < 0.05 ~ "*",
+    TRUE ~ "n.s."),
+    p_value = format(t_test_p_value, scientific = TRUE, digits = 2))
+
+# Skalieren der Mean-Werte
+scaling_factor <- 100 / BL_all_time_long$Mean[BL_all_time_long$V1 == 0]
+
+# Anwendung des Skalierungsfaktors auf die Mean-Spalte
+BL_all_time_long$Mean_scaled <- BL_all_time_long$Mean * scaling_factor
+
+# Plot für BL_all_time erstellen
+barplot_BL_all_time <- ggplot(BL_all_time_long, aes(x = factor(V1), y = Mean_scaled, fill = Condition)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  geom_errorbar(aes(ymin = Mean_scaled - SD, ymax = Mean_scaled + SD), color = "black", width = 0.2) +
+  scale_fill_manual(values = c("BL_all_time" = "#87CEEB", "Dark" = "gray")) + # Farbwahl
+  theme_classic() +
+  scale_y_continuous(limits = c(0, 110), breaks = seq(0, 100, by = 20)) +
+  theme(text = element_text(size = 18),
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 14),
+        panel.background = element_rect(fill = "white")) +
+  labs(x = "Time (h)", y = "embryo viability [%]", fill = "Condition") +
+  geom_text(aes(y = max(Mean_scaled + SD) + 5, label = ifelse(V1 == 0, p_value, "")), 
+            position = position_dodge(width = 0.5), size = 5, vjust = 0, hjust = 0.75, color = "gray") +
+  geom_text(aes(y = max(Mean_scaled + SD) + 5, label = ifelse(V1 != 0, p_value, "")), 
+            position = position_dodge(width = 0.5), size = 5, vjust = 0) 
+
+# Plot speichern
+ggsave(
+  filename = paste0(plot_dir, "Figure_3_F_viability_time_windows.pdf.pdf"),
+  plot = barplot_BL_all_time,
+  width = 10,
+  height = 8
+)
+
+```
+
+
+```{r figure_3_G_recovery_812}
+library(tidyverse)    
+library(readr)        
+library(cowplot)      
+library(reshape2)     
+library(pheatmap)    
+library(rstatix)      
+library(tidyr)        
+library(VennDiagram)  
+library(scales)       
+library(UpSetR)      
+library(ggpubr)  
+
+
+
+options(scipen=999)
+
+### required data
+all_genes <- read.table("/g/furlong/project/92_SPT4_SPT5/Depletion_CUTnTag/niklas_additional_analysis/bed_files/all_filtered_genes.bed")
+FPKM = read_tsv("/g/furlong/project/85_seqFISH/data/gene_expression/gene_expression_across_embryogenesis_FPKM.txt")
+
+### functions
+# function to merge loaded data frames 
+MyMerge <- function(x, y){
+  df <- merge(x, y, by= "rn", all.x= TRUE, all.y= TRUE)
+  return(df)
+}
+
+# function to adjust the colnames of loaded dataframes for merging
+add_prefix_to_colnames <- function(df) {
+  df_name <- deparse(substitute(df))
+  colnames(df) <- paste0(df_name, "_", colnames(df))
+  return(df)
+}
+
+
+### heatmap plots
+# load all the samples individually to plot them as heatmaps
+BL812h = read.table("/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_8-12h/tables/conditionBL812h_VS_conditionDark.tsv", header=TRUE)
+BL812h$rn <- rownames(BL812h)
+BL812hD1216h = read.table("/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_12-16h/tables/conditionBL812hD1216h_VS_conditionDark.tsv", header=TRUE)
+BL812hD1216h$rn <- rownames(BL812hD1216h)
+BL812hD1220h = read.table("/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_16-20h/tables/conditionBL812hD1220h_VS_conditionDark.tsv", header=TRUE)
+BL812hD1220h$rn <- rownames(BL812hD1220h)
+
+BL1216hD1620h = read.table("/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_16-20h/tables/conditionBL1216hD1620h_VS_conditionDark.tsv", header=TRUE)
+BL1216hD1620h$rn <- rownames(BL1216hD1620h)
+
+BL820h <- read.table("/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_16-20h/tables/conditionBL820h_VS_conditionDark.tsv")
+BL820h$rn = rownames(BL820h)
+BL1620h <- read.table("/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_16-20h/tables/conditionBL1620h_VS_conditionDark.tsv")
+BL1620h$rn = rownames(BL1620h)
+BL1216h <- read.table("/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_12-16h/tables/conditionBL1216h_VS_conditionDark.tsv")
+BL1216h$rn = rownames(BL1216h)
+
+BL812h <- add_prefix_to_colnames(BL812h)
+BL812hD1216h <- add_prefix_to_colnames(BL812hD1216h)
+BL812hD1220h <- add_prefix_to_colnames(BL812hD1220h)
+BL1216hD1620h <- add_prefix_to_colnames(BL1216hD1620h)
+BL1216h <- add_prefix_to_colnames(BL1216h)
+
+# merge data frames belonging into the 8-12h time point into one
+BL812h_all = merge(merge(BL812h, BL812hD1216h, by.x = "BL812h_rn", by.y = "BL812hD1216h_rn", all.x= TRUE, all.y= TRUE), BL812hD1220h, by.x = "BL812h_rn", by.y= "BL812hD1220h_rn", all.x= TRUE, all.y= TRUE)
+
+BL812h_all_signif_812 = BL812h_all %>%
+  filter( ((BL812h_log2FoldChange > 1 | BL812h_log2FoldChange < -1) & BL812h_padj < 0.01) ) %>%
+  dplyr::select(BL812h_log2FoldChange, BL812h_padj, BL812hD1216h_log2FoldChange,
+                BL812hD1216h_padj, BL812hD1220h_log2FoldChange, BL812hD1220h_padj, BL812h_rn)
+
+colnames(BL812h_all_signif_812) = c("BL8-12h_log2FC", "BL8-12h_padj", "BL8-12h_D12-16h_log2FC", "BL8-12h_D12-16h_padj", "BL8-12h_D12-20h_log2FC", "BL8-12h_D12-20h_padj", "gene_ID")
+
+
+# merge data frames belonging into the 12-16h time point into one
+BL1216h_all = merge(BL1216h, BL1216hD1620h, by.x = "BL1216h_rn", by.y = "BL1216hD1620h_rn", all.x= TRUE, all.y= TRUE)
+
+# filter for genes significant in at least one of the three samples of 12-16h
+BL1216h_signif = BL1216h_all %>%
+  filter( ((BL1216h_log2FoldChange > 1 | BL1216h_log2FoldChange < -1) & BL1216h_padj < 0.01) |
+            ((BL1216hD1620h_log2FoldChange > 1 | BL1216hD1620h_log2FoldChange < -1) & BL1216hD1620h_padj < 0.01) ) %>%
+  dplyr::select(BL1216h_log2FoldChange, BL1216h_padj, BL1216hD1620h_log2FoldChange, BL1216hD1620h_padj, BL1216h_rn)
+
+colnames(BL1216h_signif) = c("BL12-16h_log2FC", "BL12-16h_padj", "BL12-16h_D16-20h_log2FC", "BL12-16h_D16-20h_padj", "gene_ID")
+
+# filter for genes significant in at least one of the three samples of 12-16h
+BL1216h_signif_1216 = BL1216h_all %>%
+  filter( ((BL1216h_log2FoldChange > 1 | BL1216h_log2FoldChange < -1) & BL1216h_padj < 0.01) ) %>%
+  dplyr::select(BL1216h_log2FoldChange, BL1216h_padj, BL1216hD1620h_log2FoldChange, BL1216hD1620h_padj, BL1216h_rn)
+
+colnames(BL1216h_signif_1216) = c("BL12-16h_log2FC", "BL12-16h_padj", "BL12-16h_D16-20h_log2FC", "BL12-16h_D16-20h_padj", "gene_ID")
+
+
+# remove NAs
+BL812h_all_signif_812 = replace(BL812h_all_signif_812, is.na(BL812h_all_signif_812), 0)
+BL1216h_signif_1216 = replace(BL1216h_signif_1216, is.na(BL1216h_signif_1216), 0)
+
+
+# plot heatmaps and select columns for the log2foldchange
+
+# Setze die Breite und Höhe für die PDF-Datei
+pdf(file = paste0(plot_dir, "Figure_3_G_recovery_BL812.pdf"), width = 9, height = 8)
+
+# Erstelle das Heatmap
+pheatmap(
+  BL812h_all_signif_812[, c(1, 3, 5)],
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  show_rownames = F,
+  colorRampPalette(c("blue", "white", "red"))(25),
+  breaks = seq(-3, 3, length.out = 26),
+  main = "log2FC",
+  angle_col = 0,
+  fontsize_col = 10,
+  border_color = NA 
+)
+
+# Schließe die PDF-Datei
+dev.off()
+```
+
+```{r figure_3_F_recovery_1216}
+# Setze die Breite und Höhe für die PDF-Datei
+pdf(file = paste0(plot_dir, "Figure_3_G_recovery_BL1216.pdf"), width = 6, height = 8)
+
+# Erstelle das Heatmap
+pheatmap(
+  BL1216h_signif_1216[, c(1, 3)],
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  show_rownames = FALSE,
+  color = colorRampPalette(c("blue", "white", "red"))(25),
+  breaks = seq(-3, 3, length.out = 26),
+  main = "log2FC",
+  angle_col = 0,
+  fontsize_col = 10,
+  border_color = NA 
+)
+
+# Schließe die PDF-Datei
+dev.off()
+```
+
+
+```{r supp_figure_3_G_recovery_1216}
+library(tidyverse)    
+library(readr)        
+library(cowplot)      
+library(reshape2)     
+library(pheatmap)    
+library(rstatix)      
+library(tidyr)        
+library(VennDiagram)  
+library(scales)       
+library(UpSetR)      
+library(ggpubr)  
+
+options(scipen=999)
+dir.create("/g/furlong/project/92_SPT4_SPT5/RNA-Seq/niklas_additional_analysis/heatmap_plots/", recursive = TRUE, showWarnings = FALSE)
+
+### Required data
+all_genes <- read.table("/g/furlong/project/92_SPT4_SPT5/Depletion_CUTnTag/niklas_additional_analysis/bed_files/all_filtered_genes.bed")
+FPKM = read_tsv("/g/furlong/project/85_seqFISH/data/gene_expression/gene_expression_across_embryogenesis_FPKM.txt")
+
+### Functions
+MyMerge <- function(x, y) {
+  df <- merge(x, y, by = "rn", all.x = TRUE, all.y = TRUE)
+  return(df)
+}
+
+add_prefix_to_colnames <- function(df) {
+  df_name <- deparse(substitute(df))
+  colnames(df) <- paste0(df_name, "_", colnames(df))
+  return(df)
+}
+
+### Heatmap plots
+# Load data for each timepoint
+BL812h = read.table("/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_8-12h/tables/conditionBL812h_VS_conditionDark.tsv", header=TRUE)
+BL812h$rn <- rownames(BL812h)
+BL812hD1216h = read.table("/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_12-16h/tables/conditionBL812hD1216h_VS_conditionDark.tsv", header=TRUE)
+BL812hD1216h$rn <- rownames(BL812hD1216h)
+BL812hD1220h = read.table("/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_16-20h/tables/conditionBL812hD1220h_VS_conditionDark.tsv", header=TRUE)
+BL812hD1220h$rn <- rownames(BL812hD1220h)
+
+BL1216h = read.table("/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_12-16h/tables/conditionBL1216h_VS_conditionDark.tsv", header=TRUE)
+BL1216h$rn <- rownames(BL1216h)
+BL1216hD1620h = read.table("/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_16-20h/tables/conditionBL1216hD1620h_VS_conditionDark.tsv", header=TRUE)
+BL1216hD1620h$rn <- rownames(BL1216hD1620h)
+
+# Adjust column names
+BL812h <- add_prefix_to_colnames(BL812h)
+BL812hD1216h <- add_prefix_to_colnames(BL812hD1216h)
+BL812hD1220h <- add_prefix_to_colnames(BL812hD1220h)
+BL1216h <- add_prefix_to_colnames(BL1216h)
+BL1216hD1620h <- add_prefix_to_colnames(BL1216hD1620h)
+
+# Merge data frames without filtering steps for 8-12h and 12-16h time points
+BL812h_all = merge(merge(BL812h, BL812hD1216h, by.x = "BL812h_rn", by.y = "BL812hD1216h_rn", all.x = TRUE, all.y = TRUE), BL812hD1220h, by.x = "BL812h_rn", by.y= "BL812hD1220h_rn", all.x = TRUE, all.y = TRUE)
+BL1216h_all = merge(BL1216h, BL1216hD1620h, by.x = "BL1216h_rn", by.y = "BL1216hD1620h_rn", all.x = TRUE, all.y = TRUE)
+
+# Replace NA values with 0 for visualization
+BL812h_all = replace(BL812h_all, is.na(BL812h_all), 0)
+BL1216h_all = replace(BL1216h_all, is.na(BL1216h_all), 0)
+
+### Plot heatmap for 8-12h
+pdf(file = paste0(plot_dir, "Figure_3_G_recovery_BL812_all_genes.pdf"), width = 9, height = 8)
+pheatmap(
+  BL812h_all[, c("BL812h_log2FoldChange", "BL812hD1216h_log2FoldChange", "BL812hD1220h_log2FoldChange")],
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  show_rownames = FALSE,
+  color = colorRampPalette(c("blue", "white", "red"))(25),
+  breaks = seq(-3, 3, length.out = 26),
+  main = "log2FC",
+  angle_col = 0,
+  fontsize_col = 10,
+  border_color = NA
+)
+dev.off()
+
+### Plot heatmap for 12-16h
+pdf(file = paste0(plot_dir, "/Figure_3_G_recovery_BL1216_all_genes.pdf"), width = 6, height = 8)
+pheatmap(
+  BL1216h_all[, c("BL1216h_log2FoldChange", "BL1216hD1620h_log2FoldChange")],
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  show_rownames = FALSE,
+  color = colorRampPalette(c("blue", "white", "red"))(25),
+  breaks = seq(-3, 3, length.out = 26),
+  main = "log2FC",
+  angle_col = 0,
+  fontsize_col = 10,
+  border_color = NA
+)
+dev.off()
+
+```
+
+```{r supp_table_3_G_recovery_812_1216}
+# Funktion zur Zählung von up-, down- und dysregulierten Genen
+count_gene_regulation <- function(df, columns, pval_columns, threshold = 1, pval_threshold = 0.01) {
+  counts <- lapply(seq_along(columns), function(i) {
+    col <- columns[i]
+    pval_col <- pval_columns[i]
+    upregulated <- sum(df[[col]] > threshold & df[[pval_col]] < pval_threshold, na.rm = TRUE)
+    downregulated <- sum(df[[col]] < -threshold & df[[pval_col]] < pval_threshold, na.rm = TRUE)
+    dysregulated <- upregulated + downregulated
+    return(c(upregulated = upregulated, downregulated = downregulated, dysregulated = dysregulated))
+  })
+  counts_df <- do.call(rbind, counts)
+  rownames(counts_df) <- columns
+  return(as.data.frame(counts_df))
+}
+
+
+# Spaltennamen und entsprechende p-Wert-Spalten für die Zeitpunkte
+columns_BL812 <- c("BL812h_log2FoldChange", "BL812hD1216h_log2FoldChange", "BL812hD1220h_log2FoldChange")
+pvals_BL812 <- c("BL812h_padj", "BL812hD1216h_padj", "BL812hD1220h_padj")
+
+columns_BL1216 <- c("BL1216h_log2FoldChange", "BL1216hD1620h_log2FoldChange")
+pvals_BL1216 <- c("BL1216h_padj", "BL1216hD1620h_padj")
+
+# Berechnung der Anzahl von up-, down- und dysregulierten Genen
+regulation_BL812 <- count_gene_regulation(BL812h_all, columns_BL812, pvals_BL812)
+regulation_BL1216 <- count_gene_regulation(BL1216h_all, columns_BL1216, pvals_BL1216)
+
+# Zusammenführen der Ergebnisse
+regulation_table <- rbind(
+  data.frame(Timepoint = columns_BL812, regulation_BL812),
+  data.frame(Timepoint = columns_BL1216, regulation_BL1216)
+)
+# Entfernen von "_log2FoldChange" aus der Timepoint-Spalte
+regulation_table$Timepoint <- gsub("_log2FoldChange", "", regulation_table$Timepoint)
+
+# Tabelle anzeigen und speichern
+print(regulation_table)
+write.csv(regulation_table, paste0(plot_dir, "/Figure_3_G_recovery_dysregulated_genes.csv"), row.names = FALSE)
+
+```
+
+```{r supp_table_3_G_recovery_812_1216_selection}
+# Funktion zur Bestimmung der dysregulierten Gene und deren Unterteilung in up- und downregulierte Gene
+get_dysregulated_genes <- function(df, foldchange_col, pval_col, threshold = 1, pval_threshold = 0.01) {
+  # Bestimmen der dysregulierten Gene (up- und downreguliert)
+  upregulated_genes <- which(df[[foldchange_col]] > threshold & df[[pval_col]] < pval_threshold)
+  downregulated_genes <- which(df[[foldchange_col]] < -threshold & df[[pval_col]] < pval_threshold)
+  return(list(upregulated = upregulated_genes, downregulated = downregulated_genes))  # Rückgabe von up- und downregulierten Genen
+}
+
+# Dysregulierte Gene bei BL812h
+dysregulated_BL812 <- get_dysregulated_genes(BL812h_all, "BL812h_log2FoldChange", "BL812h_padj")
+
+# Dysregulierte Gene bei BL812hD1216h und BL812hD1220h (Vergleich zu BL812h)
+dysregulated_BL812D1216 <- get_dysregulated_genes(BL812h_all, "BL812hD1216h_log2FoldChange", "BL812hD1216h_padj")
+dysregulated_BL812D1220 <- get_dysregulated_genes(BL812h_all, "BL812hD1220h_log2FoldChange", "BL812hD1220h_padj")
+
+# Bestimmen, wie viele der dysregulierten Gene von BL812h auch bei BL812hD1216h und BL812hD1220h weiterhin dysreguliert sind
+upregulated_overlap_1216 <- length(intersect(dysregulated_BL812$upregulated, dysregulated_BL812D1216$upregulated))
+downregulated_overlap_1216 <- length(intersect(dysregulated_BL812$downregulated, dysregulated_BL812D1216$downregulated))
+
+upregulated_overlap_1220 <- length(intersect(dysregulated_BL812$upregulated, dysregulated_BL812D1220$upregulated))
+downregulated_overlap_1220 <- length(intersect(dysregulated_BL812$downregulated, dysregulated_BL812D1220$downregulated))
+
+# Dysregulierte Gene bei BL1216h
+dysregulated_BL1216 <- get_dysregulated_genes(BL1216h_all, "BL1216h_log2FoldChange", "BL1216h_padj")
+
+# Dysregulierte Gene bei BL1216hD1620h (Vergleich zu BL1216h)
+dysregulated_BL1216D1620 <- get_dysregulated_genes(BL1216h_all, "BL1216hD1620h_log2FoldChange", "BL1216hD1620h_padj")
+
+# Bestimmen, wie viele der dysregulierten Gene von BL1216h auch bei BL1216hD1620h weiterhin dysreguliert sind
+upregulated_overlap_1620 <- length(intersect(dysregulated_BL1216$upregulated, dysregulated_BL1216D1620$upregulated))
+downregulated_overlap_1620 <- length(intersect(dysregulated_BL1216$downregulated, dysregulated_BL1216D1620$downregulated))
+
+# Erstellen der Tabelle
+overlap_table <- data.frame(
+  Timepoint = c("BL812h", "BL812hD1216h", "BL812hD1220h", "BL1216h", "BL1216hD1620h"),
+  Upregulated_genes = c(length(dysregulated_BL812$upregulated), length(dysregulated_BL812D1216$upregulated), length(dysregulated_BL812D1220$upregulated), length(dysregulated_BL1216$upregulated), length(dysregulated_BL1216D1620$upregulated)),
+  Downregulated_genes = c(length(dysregulated_BL812$downregulated), length(dysregulated_BL812D1216$downregulated), length(dysregulated_BL812D1220$downregulated), length(dysregulated_BL1216$downregulated), length(dysregulated_BL1216D1620$downregulated)),
+  Overlap_with_previous_upregulated = c(NA, upregulated_overlap_1216, upregulated_overlap_1220, NA, upregulated_overlap_1620),
+  Overlap_with_previous_downregulated = c(NA, downregulated_overlap_1216, downregulated_overlap_1220, NA, downregulated_overlap_1620)
+)
+
+# Tabelle anzeigen
+print(overlap_table)
+
+# Tabelle speichern
+write.csv(overlap_table, paste0(plot_dir, "/Figure_3_G_recovery_dysregulated_genes_up_down_from_selection.csv"), row.names = FALSE)
+
+```

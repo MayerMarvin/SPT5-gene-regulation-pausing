@@ -1,0 +1,366 @@
+###############################################################################
+## Parse config
+###############################################################################
+import re
+
+# Read config and get key parameters
+configfile: '/g/furlong/project/92_SPT4_SPT5/PROseq/config/PROseq_config.yaml'
+
+# Get replicates, samples and conditions
+samples = list(config['fastq'].keys())
+experiment = ["PROseq_34h_dark", "PROseq_34h_BL1h", "PROseq_34h_BL3h", "PROseq_1820h_dark", "PROseq_1820h_BL2h"]
+
+# Create tmpdir
+tmpdir = config['tmpdir']
+BW_DIR = "/g/furlong/project/92_SPT4_SPT5/PROseq/analysis/PROseq/bigwigs/"
+QC_DIR = "/g/furlong/project/92_SPT4_SPT5/PROseq/analysis/PROseq_/QC"
+ENV_DIR = "/g/furlong/project/92_SPT4_SPT5/PROseq/env"
+CONFIG_DIR = "/g/furlong/project/92_SPT4_SPT5/PROseq/config"
+BAM_SCRATCH_TMP_DIR = "/scratch/dulja/PROseq"
+
+
+
+###############################################################################
+## PROseq pipeline - Targets
+###############################################################################
+
+# Set wildcard constraints
+wildcard_constraints:
+    sample="(" + "|".join(samples) + ")"
+
+
+BIGWIGS_REPLICATES = [
+    expand(BW_DIR + '{sample}.plus.bw',sample=samples),
+    expand(BW_DIR + '{sample}.minus.bw',sample=samples),
+    expand(BW_DIR + '{sample}.bw',sample=samples),
+]
+
+MERGED_REPLICATES = [
+    expand(BW_DIR + '{experiment}.merged.bw',experiment=experiment),
+]
+
+QC_OUT = [
+    expand(QC_DIR + '/{sample}_qualimap.pdf',sample=samples),
+    expand(QC_DIR + "/fastq_screen/{sample}_screen.html",sample=samples),
+    expand(QC_DIR + '/{sample}_fastqc.html',sample=samples),
+    expand(QC_DIR + '/{sample}.flagstat.txt',sample=samples),
+    expand(QC_DIR + '/{sample}_EstimateLibraryComplexity.txt',sample=samples),
+    expand(QC_DIR + '/{sample}_CollectRnaSeqMetrics.txt',sample=samples),
+    
+]
+
+MULTIQC_OUT = QC_DIR + "/MultiQC_global_report.html"
+
+
+# Final rule
+rule all:
+    input:
+        BIGWIGS_REPLICATES, MERGED_REPLICATES,
+        QC_OUT, 
+        MULTIQC_OUT
+
+
+###############################################################################
+## Trimming and mapping
+###############################################################################
+
+# Trim fastq
+rule trim_fastq:
+    input:
+        lambda wildcards: config['fastq'][wildcards.sample]
+    output:
+        BAM_SCRATCH_TMP_DIR + '/{sample}.fastq.gz'
+    resources:
+        cpu=8,
+        memPerCpu=2000,
+        time=960
+    params:
+        name='{sample}',
+        minbaseq=config['trimming']['minbaseq'], # 10
+        minlength=config['trimming']['min_length'], # 20
+        outdir=tmpdir
+    conda:
+        ENV_DIR + '/PROseq_env.yml'# cutadapt V4.1
+    shell:
+        'mkdir -p {params[outdir]} && '
+        'cutadapt -j {resources[cpu]} -q {params[minbaseq]} -m {params[minlength]} -o {output} {input}'
+
+# Align fastq files
+rule align_fastq:
+    input:
+        BAM_SCRATCH_TMP_DIR + '/{sample}.fastq.gz'
+    output:
+        BAM_SCRATCH_TMP_DIR + '/{sample}.sam'
+    resources:
+        cpu=8,
+        memPerCpu=4000,
+        time=4320
+    params:
+        name='{sample}',
+        index='/g/furlong/genome/D.melanogaster/Dm6/indexes/bwa/dm6.UCSC.noMask.fa',
+    conda:
+        ENV_DIR + '/PROseq_env.yml'# bwa V0.7.17
+    shell:
+        'bwa mem -t {resources[cpu]} {params[index]} {input} > {output}'
+        
+# Filter sam file
+rule filter_sam:
+    input:
+        BAM_SCRATCH_TMP_DIR + '/{sample}.sam'
+    output:
+        BAM_SCRATCH_TMP_DIR + '/{sample}.filtered.sam'
+    resources:
+        cpu=8,
+        memPerCpu=4000,
+        time=4320    
+    params:
+        name='{sample}'
+    conda:
+        ENV_DIR + '/PROseq_env.yml'# samtools V1.15.1
+    shell:
+        'samtools view -@ {resources[cpu]} -h -q 30 {input} > {output}'
+            
+# Sort bam file
+rule sort_sam:
+    input:
+        BAM_SCRATCH_TMP_DIR + '/{sample}.filtered.sam'
+    output:
+        bam=BAM_SCRATCH_TMP_DIR + '/{sample}.bam',
+        bai=BAM_SCRATCH_TMP_DIR + '/{sample}.bai'
+    resources:
+        cpu=8,
+        memPerCpu=8000,
+        time=1920
+    params:
+        name='{sample}'
+    conda:
+        ENV_DIR + '/PROseq_env.yml'# picard V2.18.17
+    shell:
+        'picard SortSam I={input} O={output.bam} SO=coordinate CREATE_INDEX=true'
+
+
+###############################################################################
+## Create bigWigs
+###############################################################################
+
+# Create bigwigs replicates
+rule create_bigwigs:
+    input:
+        bam=BAM_SCRATCH_TMP_DIR + '/{sample}.bam',
+        blacklist='/g/furlong/project/92_SPT4_SPT5/PROseq/data/dm6-blacklist.v2.bed.gz'
+    output:
+        plus=BW_DIR+'{sample}.plus.bw',
+        minus=BW_DIR+'{sample}.minus.bw',
+        both=BW_DIR+'{sample}.bw'
+    resources:
+        cpu=8,
+        memPerCpu=2000,
+        time=1920
+    params:
+        name='{sample}',
+        binsize=config['bigwigs']['binsize'], # 1
+        genomesize=config['bigwigs']['dmel_size'] # 142573017
+    conda:
+        ENV_DIR + '/PROseq_env.yml' # deeptools 3.5.5
+    shell:
+        'module load deepTools/3.5.5-foss-2022b &&'
+        'bamCoverage -b {input.bam} -o {output.plus} -bs {params[binsize]} --filterRNAstrand forward --Offset 1 --normalizeUsing RPGC --effectiveGenomeSize {params[genomesize]} --blackListFileName {input.blacklist} && '
+        'bamCoverage -b {input.bam} -o {output.minus} -bs {params[binsize]} --filterRNAstrand reverse --Offset 1 --normalizeUsing RPGC --effectiveGenomeSize {params[genomesize]} --blackListFileName {input.blacklist} &&'   
+        'bamCoverage -b {input.bam} -o {output.both} -bs {params[binsize]}  --Offset 1 --normalizeUsing RPGC --effectiveGenomeSize {params[genomesize]} --blackListFileName {input.blacklist}'        
+
+
+# Merg replicates bigiwgs
+rule merge_replicates:
+    input:
+        rep1 = BW_DIR+'{experiment}_rep1.bw',
+        rep2 = BW_DIR+'{experiment}_rep2.bw'
+    output:
+        merged = BW_DIR+'{experiment}.merged.bw',
+        tmp = BW_DIR+'{experiment}.merged.bedGraph',    
+        tmp_unsorted = BW_DIR+'{experiment}.merged.unsorted.bedGraph'
+    resources:
+        cpu=4,
+        memPerCpu=2000,
+        time=960
+    params:
+        bedgraphtobigwig = "/home/mayer/ucsc_tools/bedGraphToBigWig",
+        bigwigmerge = "/home/mayer/ucsc_tools/bigWigMerge",
+        chr_sizes = "/home/mayer/92_SPT4_SPT5/PROseq/data/D.melanogaster_H.sapiens/chrNameLength.txt"
+    conda:
+        ENV_DIR + '/PROseq_env.yml'
+    shell:
+        """
+        {params.bigwigmerge} {input.rep1} {input.rep2} {output.tmp_unsorted}
+        sort -k1,1 -k2,2n {output.tmp_unsorted} > {output.tmp}
+        {params.bedgraphtobigwig} {output.tmp} {params.chr_sizes} {output.merged}
+        """
+
+
+###############################################################################
+## QC pipeline
+###############################################################################
+
+# FastQC 
+rule fastqc:
+    input:
+        lambda wildcards: config['fastq'][wildcards.sample]
+    output:
+        html=QC_DIR + '/{sample}_fastqc.html' 
+    params:
+        outdir=QC_DIR,
+        name='{sample}'
+    resources:
+        cpu = 8,
+        memPerCpu = 2000,
+        time = 360
+    conda:
+        ENV_DIR + '/PROseq_env.yml'
+    shell:
+        'fastqc -o {params.outdir} {input}'
+
+
+# fastq screen 
+rule fastq_screen:
+    input:
+        lambda wildcards: config['fastq'][wildcards.sample]
+    output:
+        QC_DIR + "/fastq_screen/{sample}_screen.html"  
+    resources:
+        cpu = 8,
+        memPerCpu = 8000,
+        time = 120
+    params:
+        name='{sample}',
+        n_sequences = config["parameters_mapping"]["fastq_screen"]["n_sequences"],
+        aligner = config["parameters_mapping"]["fastq_screen"]["aligner"],
+        config_file = CONFIG_DIR + "/fastq_screen.conf",
+        out_dir = QC_DIR + "/fastq_screen"
+    conda:         
+        ENV_DIR + '/PROseq_env.yml'
+    shell:
+        """
+        fastq_screen --aligner {params.aligner} --conf {params.config_file} \
+        --force --outdir {params.out_dir} --subset {params.n_sequences} \
+        --threads {resources.cpu} {input}
+        """ 
+
+# BAM QC mit Qualimap
+rule bam_qc_qualimap:
+    input:
+        bam=BAM_SCRATCH_TMP_DIR + '/{sample}.bam'
+    output:
+        pdf=QC_DIR + '/{sample}_qualimap.pdf'
+    resources:
+        cpu=4,
+        memPerCpu=8000,
+        time=1920
+    params:
+        name='{sample}_qualimap',
+        outdir=QC_DIR
+    conda:
+        ENV_DIR + '/PROseq_env.yml'
+    shell:
+        """
+        export JAVA_OPTS='-Djava.awt.headless=true'
+
+        qualimap bamqc -bam {input.bam} --java-mem-size=8G --outdir {params.outdir} --outfile {params.name} 
+        """
+
+
+# BAM QC mit flagstat 
+rule bam_qc_flagstat:
+    input:
+        bam=BAM_SCRATCH_TMP_DIR + '/{sample}.bam'
+    output:
+        flagstat=QC_DIR + '/{sample}.flagstat.txt'
+    resources:
+        cpu=4,
+        memPerCpu=8000,
+        time=1920
+    params:
+        name='{sample}',
+        outdir=QC_DIR
+    conda:
+        ENV_DIR + '/PROseq_env.yml'
+    shell:
+        'samtools flagstat {input.bam} > {output.flagstat}'
+
+
+
+
+# EstimateLibraryComplexity
+rule EstimateLibraryComplexity:
+    input:
+        BAM_SCRATCH_TMP_DIR + '/{sample}.bam'
+    output:
+        QC_DIR + '/{sample}_EstimateLibraryComplexity.txt'
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 120
+    params:
+        name='{sample}',
+        out_dir = QC_DIR + "/picard"
+    conda:
+        ENV_DIR + '/PROseq_env.yml'
+    shell:
+        """
+        picard EstimateLibraryComplexity I={input} O={output}
+        """ 
+
+# Picard RNA metrics 
+rule picard_rna_metrics: 
+    input:
+        BAM_SCRATCH_TMP_DIR + '/{sample}.bam'
+    output:
+        QC_DIR + '/{sample}_CollectRnaSeqMetrics.txt'
+    resources:
+        cpu = 8,
+        memPerCpu = 8000,
+        time = 60
+    params:
+        refflat = config["annotation"]["refflat"], 
+        rrna = config["annotation"]["rrna"], 
+        strandedness = "SECOND_READ_TRANSCRIPTION_STRAND" 
+    conda:
+        ENV_DIR + '/PROseq_env.yml'
+    shell:
+        """
+        picard CollectRnaSeqMetrics I={input} O={output} \
+            REF_FLAT={params.refflat} RIBOSOMAL_INTERVALS={params.rrna} \
+            STRAND_SPECIFICITY={params.strandedness} RRNA_FRAGMENT_PERCENTAGE=0.001
+        """
+
+# Produce single QC report
+rule run_multiQC:
+    input:
+        QC_OUT
+    output:
+        QC_DIR + "/MultiQC_global_report.html"
+    params:
+        name='multiqc',
+        out_dir = QC_DIR
+    resources:
+        cpu = 8,
+        memPerCpu = 2000,
+        time = 30
+    conda: ENV_DIR + '/PROseq_env.yml'
+    shell:
+        """
+        export LC_ALL=en_US.utf-8
+        export LANG=en_US.utf-8
+
+        multiqc  -n MultiQC_global_report.html \
+        -f -o {params.out_dir} {params.out_dir}
+
+        rm -fr {QC_DIR}/MultiQC_global_report_data
+        """
+
+
+
+
+# Create log directory for each rule
+for rule in workflow._rules:
+    path = "log/{rule}".format(rule=rule)
+    if not os.path.isdir(path):
+        os.makedirs(path)

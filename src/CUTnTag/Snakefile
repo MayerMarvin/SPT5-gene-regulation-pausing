@@ -1,0 +1,370 @@
+import pandas as pd
+
+configfile: "../../../config/CUTnTag_config.yaml"
+
+
+# Variables
+CUTnTAG_LINES = list(set(config["CUTnTag_samples"].keys()))
+CUTnTAG_ANTIBODIES = list(set([antibody for line in CUTnTAG_LINES for antibody in list(config["CUTnTag_samples"][line].keys())]))
+CUTnTAG_LINE_ANTOBODY = list(set([tuple([line, antibody]) for line in CUTnTAG_LINES for antibody in list(config["CUTnTag_samples"][line].keys())]))
+CUTnTAG_LINE_ANTOBODY_CONTRAST = list(set([tuple([line, antibody]) for line in CUTnTAG_LINES for antibody in list(config["CUTnTag_samples"][line].keys()) if len(list(config["CUTnTag_samples"][line][antibody])) > 1 ]))
+CUTnTAG_CONDITIONS = list(set([condition for line, antibody in CUTnTAG_LINE_ANTOBODY for condition in list(config["CUTnTag_samples"][line][antibody].keys())]))
+CUTnTAG_LINE_ANTIBODY_CONDITIONS = list(set([tuple([line, antibody, condition]) for line, antibody in CUTnTAG_LINE_ANTOBODY for condition in list(config["CUTnTag_samples"][line][antibody].keys())]))
+CUTnTAG_SAMPLES = [sample for line, antibody, condition in CUTnTAG_LINE_ANTIBODY_CONDITIONS for sample in config["CUTnTag_samples"][line][antibody][condition]]
+CUTnTAG_LINE_ANTIBODY_CONDITIONS_REPS = list(set([tuple([line, antibody, condition]) for line, antibody, condition in CUTnTAG_LINE_ANTIBODY_CONDITIONS if len(config["CUTnTag_samples"][line][antibody][condition]) > 1]))
+
+# Paths
+CONFIG_DIR = config["global"]["config_dir"]
+ENVS_DIR = config["global"]["envs_dir"]
+PROJECT_DIR = config["global"]["project_dir"]
+FASTQ_DIR = PROJECT_DIR + config["global"]["fastq_dir"]
+SCRATCH_TEMP_DIR = config["global"]["scratch_temp_dir"]
+QC_DIR = PROJECT_DIR + config["global"]["qc_dir"]
+BAM_DIR = PROJECT_DIR + config["global"]["bam_dir"]
+BW_DIR = PROJECT_DIR + config["global"]["bw_dir"]
+
+# Targets
+## Mapping
+TRIMMED_OUT = expand("{path}/trimmed/{sample}_{rep}_val_{rep}.fq.gz", path=SCRATCH_TEMP_DIR, sample = CUTnTAG_SAMPLES, rep=["1", "2"])
+MAPPED_OUT = expand("{path}/mapped/{sample}.bam", path=SCRATCH_TEMP_DIR, sample = CUTnTAG_SAMPLES)
+MARKDUPLICATES_OUT = expand("{path}/mark_duplicates/{sample}_MarkDuplicates.bam", path=SCRATCH_TEMP_DIR, sample = CUTnTAG_SAMPLES)
+FILTERED_OUT = expand("{path}/{sample}_filtered.bam", path=BAM_DIR, sample = CUTnTAG_SAMPLES)
+RPKM_BW_OUT = expand("{path}/RPKM/{sample}_RPKM_normalized.bw", path=BW_DIR, sample = CUTnTAG_SAMPLES)
+MAPPING_PIPELINE_OUT = TRIMMED_OUT + MAPPED_OUT + MARKDUPLICATES_OUT + FILTERED_OUT + RPKM_BW_OUT
+# ## QC computation
+FASTQC_OUT = expand("{path}/fastqc/{sample}_{end}_fastqc.html", path=QC_DIR, sample = CUTnTAG_SAMPLES, end=["1", "2"])
+FASTQ_SCREEN_OUT = expand("{path}/fastq_screen/{sample}_1_screen.html", path=QC_DIR, sample = CUTnTAG_SAMPLES)
+FRAGMENT_LENGTH_OUT = expand("{path}/deeptools_fraglen/fragment_length_distribution_{sample}.txt", path=QC_DIR, sample = CUTnTAG_SAMPLES)
+INSERT_SIZE_OUT = expand("{path}/picard/insert_size_{sample}.txt", path=QC_DIR, sample = CUTnTAG_SAMPLES)
+FLAGSTAT_OUT = expand("{path}/flagstat/{sample}_flagstat.txt", path=QC_DIR, sample = CUTnTAG_SAMPLES)
+SUMMARY_ALIGNMENT_OUT = expand("{path}/picard/{sample}_CollectAlignmentSummaryMetrics.txt", path=QC_DIR, sample = CUTnTAG_SAMPLES)
+FINGERPRINT_OUT = expand("{path}/fingerprint/{sample}_plotFingerprint.txt", path=QC_DIR, sample = CUTnTAG_SAMPLES)
+QC_COMPUTE_PIPELINE_OUT = FASTQC_OUT + FASTQ_SCREEN_OUT + FRAGMENT_LENGTH_OUT + INSERT_SIZE_OUT + FLAGSTAT_OUT + SUMMARY_ALIGNMENT_OUT + FINGERPRINT_OUT
+# ## Finalise QC
+MULTIQC_OUT = expand("{path}/MultiQC_global_report.html", path=QC_DIR)
+
+
+rule all:
+    input:
+        MAPPING_PIPELINE_OUT, QC_COMPUTE_PIPELINE_OUT, MULTIQC_OUT
+
+
+
+rule TrimGalore:
+    input:
+        fq1 = expand("{path}/{{sample}}_1.fastq.gz", path=FASTQ_DIR),
+        fq2 = expand("{path}/{{sample}}_2.fastq.gz", path=FASTQ_DIR)
+    output:
+        fq1 = expand("{path}/trimmed/{{sample}}_1_val_1.fq.gz", path=SCRATCH_TEMP_DIR),
+        fq2 = expand("{path}/trimmed/{{sample}}_2_val_2.fq.gz", path=SCRATCH_TEMP_DIR)
+    resources:
+        cpu = 8,
+        memPerCpu = 2000,
+        time = 360
+    conda: ENVS_DIR + "/trimgalore_env.yml" # version 0.6.7
+    params:
+        out_dir = SCRATCH_TEMP_DIR + "/trimmed"
+    shell:
+        """
+        mkdir -p {SCRATCH_TEMP_DIR}
+        mkdir -p {params.out_dir}
+
+        trim_galore --paired {input.fq1} {input.fq2} \
+        -j {resources.cpu} -o {params.out_dir}
+        """
+
+
+rule map_to_Dmel:
+    input:
+        fq1 = expand("{path}/trimmed/{{sample}}_1_val_1.fq.gz", path=SCRATCH_TEMP_DIR),
+        fq2 = expand("{path}/trimmed/{{sample}}_2_val_2.fq.gz", path=SCRATCH_TEMP_DIR)
+    output:
+        bam = expand("{path}/mapped/{{sample}}.bam", path=SCRATCH_TEMP_DIR)
+    resources:
+        cpu = 8,
+        memPerCpu = 4000,
+        time = 720
+    params:
+        index = config["annotation"]["bwa_index"],
+        output_dir = SCRATCH_TEMP_DIR + "/mapped",
+        temp_file = lambda wildcards: SCRATCH_TEMP_DIR + "/mapped/{wildcards.sample}.temp"
+    conda: ENVS_DIR + "/bwa_env.yml" # version 0.7.17
+    shell:
+        """
+        mkdir -p {params.output_dir}
+
+        bwa mem -t {resources.cpu} -o {output.bam}.temp.sam \
+        {params.index} {input.fq1} {input.fq2}
+        
+        samtools sort -n -@ {resources.cpu} {output.bam}.temp.sam \
+        -T {params.temp_file} | samtools view -b > {output.bam}
+
+        rm {output.bam}.temp*
+        """
+
+
+rule mark_duplicates:
+    input:
+        expand("{path}/mapped/{{sample}}.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        bam = expand("{path}/mark_duplicates/{{sample}}_MarkDuplicates.bam", path=SCRATCH_TEMP_DIR),
+        metrics = expand("{path}/mark_duplicates/{{sample}}_MarkDuplicates_metrics.txt", path=QC_DIR)
+    resources:
+        cpu = 8,
+        memPerCpu = 4000,
+        time = 360
+    params:
+        output_dir = QC_DIR + "/mark_duplicates",
+        scratch_dir = SCRATCH_TEMP_DIR + "/mark_duplicates",
+        temp_file = lambda wildcards: SCRATCH_TEMP_DIR + "/mark_duplicates/{wildcards.sample}.temp"
+    conda: ENVS_DIR + "/picard_env.yml" # picard version 3.0.0, samtools version 1.6
+    shell:
+        """
+        mkdir -p {params.output_dir}
+        mkdir -p {params.scratch_dir}
+
+        picard MarkDuplicates -I {input} -O {output.bam}.temp.bam \
+        -M {output.metrics} -ASO queryname
+
+        samtools sort -@ {resources.cpu} -T {params.temp_file} \
+        -o {output.bam} {output.bam}.temp.bam
+        samtools index {output.bam}
+
+        rm {output.bam}.temp*
+        """
+
+
+rule filter_bam:
+    input:
+        expand("{path}/mark_duplicates/{{sample}}_MarkDuplicates.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        expand("{path}/{{sample}}_filtered.bam", path=BAM_DIR)
+    resources:
+        cpu = 8,
+        memPerCpu = 4000,
+        time = 360
+    params:
+        min_mapping_quality = config["parameters_mapping"]["mapping"]["min_mapping_quality"],
+        max_fragment_length = config["parameters_mapping"]["mapping"]["max_fragment_length"],
+        output_dir = SCRATCH_TEMP_DIR + "/filtered"
+    conda: ENVS_DIR + "/samtools_env.yml" # version 1.16.1
+    shell:
+        """
+        mkdir -p {params.output_dir}
+
+        samtools view -h -F 3840 -f 3 -q {params.min_mapping_quality} {input} \
+        | awk 'substr($0,1,1) == "@" || (sqrt($9^2) > 0 && sqrt($9^2) <= {params.max_fragment_length})' \
+        | samtools sort -@ {resources.cpu} - | samtools view -b  - > {output}
+
+        samtools index {output}
+        """
+
+
+rule coverage_RPKM_correction:
+    input:
+        expand("{path}/{{sample}}_filtered.bam", path=BAM_DIR)
+    output:
+        expand("{path}/RPKM/{{sample}}_RPKM_normalized.bw", path=BW_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 8000,
+        time = 360
+    params:
+        chrsize_bed = config["annotation"]["chrsize_bed"],
+        bin_size = config["parameters_mapping"]["coverage_noSpikeIn"]["bin_size"],
+        norm_method = config["parameters_mapping"]["coverage_noSpikeIn"]["normalization_method"]
+    conda: ENVS_DIR + "/deeptools_env.yml" # version 3.5.1
+    shell:
+        """
+        EFFECTIVE_GENOME_SIZE=`cat {params.chrsize_bed} \
+                | awk '{{sum += $3}} END {{print sum}}'`
+
+        bamCoverage -b {input} -o {output} \
+        --binSize {params.bin_size} --normalizeUsing {params.norm_method} \
+        --exactScaling --extendReads --ignoreDuplicates \
+        --effectiveGenomeSize $EFFECTIVE_GENOME_SIZE
+        """
+
+
+
+# ###############
+# # QC pipeline #
+# ###############
+
+
+rule run_fastqc:
+    input:
+        fq = expand("{path}/{{sample}}_{{end}}.fastq.gz", path=FASTQ_DIR),
+    output:
+        expand("{path}/fastqc/{{sample}}_{{end}}_fastqc.html", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 120
+    params:
+        out_dir = QC_DIR + "/fastqc"
+    conda: ENVS_DIR + "/fastqc_env.yml" # version 0.11.9
+    shell:
+        """
+        mkdir -p {params.out_dir}
+
+        fastqc {input.fq} -o {params.out_dir}
+        """
+
+
+rule fastq_screen:
+    input:
+        expand("{path}/{{sample}}_1.fastq.gz", path=FASTQ_DIR)
+    output:
+        expand("{path}/fastq_screen/{{sample}}_1_screen.html", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 8000,
+        time = 360
+    params:
+        n_sequences = config["parameters_mapping"]["fastq_screen"]["n_sequences"],
+        aligner = config["parameters_mapping"]["fastq_screen"]["aligner"],
+        config_file = CONFIG_DIR + "/fastq_screen.conf",
+        out_dir = QC_DIR + "/fastq_screen"
+    conda: ENVS_DIR + "/fastq_screen_env.yml" # version 0.15.2
+    shell:
+        """
+        mkdir -p {params.out_dir}
+
+        fastq_screen --aligner {params.aligner} --conf {params.config_file} \
+        --force --outdir {params.out_dir} --subset {params.n_sequences} \
+        --threads {resources.cpu} {input}
+        """
+
+
+rule fragment_length:
+    input:
+        expand("{path}/{{sample}}_filtered.bam", path=BAM_DIR)
+    output:
+        png = expand("{path}/deeptools_fraglen/fragment_length_distribution_{{sample}}.png", path=QC_DIR),
+        txt = expand("{path}/deeptools_fraglen/fragment_length_distribution_{{sample}}.txt", path=QC_DIR),
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 360
+    params:
+        out_dir = QC_DIR + "/deeptools_fraglen"
+    conda: ENVS_DIR + "/deeptools_env.yml"  # version 3.5.1
+    shell:
+        """
+        mkdir -p {params.out_dir}
+
+        bamPEFragmentSize --bamfiles {input} --histogram {output.png} \
+        --samplesLabel {wildcards.sample} --table {output.txt}
+        """
+
+
+rule insert_size:
+    input:
+        expand("{path}/{{sample}}_filtered.bam", path=BAM_DIR)
+    output:
+        png = expand("{path}/picard/insert_size_{{sample}}.png", path=QC_DIR),
+        txt = expand("{path}/picard/insert_size_{{sample}}.txt", path=QC_DIR),
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 360
+    params:
+        out_dir = QC_DIR + "/picard"
+    conda: ENVS_DIR + "/picard_env.yml"  # verison 3.0.0
+    shell:
+        """
+        picard CollectInsertSizeMetrics -I {input} \
+        -O {output.txt} -H {output.png}
+        """
+
+
+rule samtools_flagstat:
+    input:
+        expand("{path}/mark_duplicates/{{sample}}_MarkDuplicates.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        expand("{path}/flagstat/{{sample}}_flagstat.txt", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 240
+    params:
+        out_dir = QC_DIR + "/flagstat"
+    conda: ENVS_DIR + "/samtools_env.yml" # version 1.16.1
+    shell:
+        """
+        mkdir -p {params.out_dir}
+
+        samtools flagstat {input} > {output}
+        """
+
+
+rule CollectAlignmentSummaryMetrics:
+    input:
+        expand("{path}/mark_duplicates/{{sample}}_MarkDuplicates.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        expand("{path}/picard/{{sample}}_CollectAlignmentSummaryMetrics.txt", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 360
+    params:
+        out_dir = QC_DIR + "/picard"
+    conda: ENVS_DIR + "/picard_env.yml"  # verison 3.0.0
+    shell:
+        """
+        mkdir -p {params.out_dir}
+
+        picard CollectAlignmentSummaryMetrics -I {input} -O {output}
+        """
+
+
+rule plotFingerprint:
+    input:
+        expand("{path}/{{sample}}_filtered.bam", path=BAM_DIR)
+    output:
+        png = expand("{path}/fingerprint/{{sample}}_plotFingerprint.png", path=QC_DIR),
+        txt = expand("{path}/fingerprint/{{sample}}_plotFingerprint.txt", path=QC_DIR)
+    resources:
+        cpu = 8,
+        memPerCpu = 2000,
+        time = 720
+    params:
+        out_dir = QC_DIR + "/fingerprint"
+    conda: ENVS_DIR + "/deeptools_env.yml" # version 3.5.1
+    shell:
+        """
+        mkdir -p {params.out_dir}
+
+        plotFingerprint -b {input} -plot {output.png} \
+        -p {resources.cpu} --outQualityMetrics {output.txt}
+        """
+
+
+
+rule run_multiQC:
+    input:
+        QC_COMPUTE_PIPELINE_OUT
+    output:
+        expand("{path}/MultiQC_global_report.html", path=QC_DIR)
+    params:
+        out_dir = QC_DIR,
+        config = CONFIG_DIR + "/multiqc_config.yml"
+    resources:
+        cpu = 1,
+        memPerCpu = 2000,
+        time = 30
+    conda: ENVS_DIR + "/multiqc_env.yml" # version 1.13
+    shell:
+        """
+        export LC_ALL=en_US.utf-8
+        export LANG=en_US.utf-8
+
+        mkdir -p {params.out_dir}
+
+        multiqc --config {params.config} -n MultiQC_global_report.html \
+        -f -o {params.out_dir} {params.out_dir}
+
+        rm -fr {QC_DIR}/MultiQC_global_report_data
+        """
+

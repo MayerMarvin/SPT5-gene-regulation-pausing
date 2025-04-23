@@ -1,0 +1,488 @@
+---
+title: "Figure_5"
+author: "Marvin"
+date: "2024-10-07"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+plot_dir = "/g/furlong/project/92_SPT4_SPT5/Manuscript/Figures/Figure_5/"
+```
+
+```{r figure_5_A_MeanAverage_plots}
+library(tidyverse)    # For data manipulation and visualization
+library(ggplot2)      # For plotting
+library(readr)        # For reading and writing CSV files
+
+### Load data
+# Load gene data for further analysis
+all_genes <- read.table("/g/furlong/project/92_SPT4_SPT5/Depletion_CUTnTag/niklas_additional_analysis/bed_files/all_filtered_genes.bed")
+
+### Functions
+
+# Function to load and prepare data for a given sample
+prepare_data <- function(file_path, sample_label) {
+  df <- read.table(file_path, header = TRUE)
+  df$gene <- rownames(df)
+  df$sample <- sample_label
+  return(df)
+}
+
+# Function to filter significant genes based on adjusted p-value and log2 fold change
+filter_significant_genes <- function(df) {
+  df %>% 
+    filter(padj < 0.01 & (log2FoldChange > 1 | log2FoldChange < -1)) %>% 
+    dplyr::select(gene, log2FoldChange)
+}
+
+# Function to separate upregulated and downregulated genes
+filter_regulated_genes <- function(df) {
+  upregulated <- df %>% 
+    filter(padj < 0.01 & log2FoldChange > 1) %>% 
+    dplyr::select(gene)
+  downregulated <- df %>% 
+    filter(padj < 0.01 & log2FoldChange < -1) %>% 
+    dplyr::select(gene)
+  return(list(upregulated = upregulated, downregulated = downregulated))
+}
+
+### Load data from different samples
+# Define file paths and sample labels for DESeq result files
+file_paths <- c(
+  "/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_8-12h/tables/conditionBL812h_VS_conditionDark.tsv",
+  "/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_16-20h/tables/conditionBL820h_VS_conditionDark.tsv",
+  "/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_16-20h/tables/conditionBL1620h_VS_conditionDark.tsv",
+  "/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_12-16h/tables/conditionBL1216h_VS_conditionDark.tsv"
+)
+
+sample_labels <- c("BL8-12h", "BL8-20h", "BL16-20h", "BL12-16h")
+
+# Load and combine data for all samples
+all_df <- do.call(rbind, mapply(prepare_data, file_paths, sample_labels, SIMPLIFY = FALSE))
+all_df$sample <- factor(all_df$sample, levels = c("BL8-12h", "BL12-16h", "BL16-20h", "BL8-20h"))
+all_df <- na.omit(all_df)
+
+### MA Plot
+
+# Function to create an MA plot for each sample
+create_ma_plot <- function(df, sample_label, output_file, summary_table) {
+  # Calculate log2 of the base mean
+  df$log2BaseMean <- log2(df$baseMean)
+  
+  # Count regulated and non-regulated genes
+  upregulated_count <- sum(df$padj < 0.01 & df$log2FoldChange > 1)
+  downregulated_count <- sum(df$padj < 0.01 & df$log2FoldChange < -1)
+  not_dysregulated_count <- sum(df$padj >= 0.01)
+  
+  # Categorize genes based on regulation status
+  df$regulation <- ifelse(df$padj < 0.01 & df$log2FoldChange > 1, "Upregulated",
+                          ifelse(df$padj < 0.01 & df$log2FoldChange < -1, "Downregulated", "Not Dysregulated"))
+  
+  # Define plot colors for categories
+  regulation_colors <- c("Upregulated" = "#f1a226", "Downregulated" = "#298c8c", "Not Dysregulated" = "gray")
+  
+  # Create the MA plot
+  plot <- ggplot(df, aes(log2BaseMean, log2FoldChange)) +
+    geom_point(aes(color = regulation), size = 4, shape = 16, alpha = 1) +  #, stroke=0
+    scale_color_manual(values = regulation_colors) +
+
+    theme_classic() +
+    labs(fill = "Regulation", 
+         title = paste("MA Plot for", sample_label), 
+         x = expression(log[2](Base~Mean)), 
+         y = expression(log[2]('Fold Change'))) +
+    theme(
+      text = element_text(size = 18, face = "plain"),   
+      axis.title = element_text(size = 16, face = "plain"),         
+      axis.text = element_text(size = 14, face = "plain"),              
+      panel.background = element_rect(fill = "white"),
+      legend.position = "right"
+    ) +
+    ylim(-5, 5) 
+  
+  # Save plot to file
+  ggsave(filename = output_file, plot = plot, width = 10, height = 6, units = "in", device="pdf")
+  
+  # Update summary table
+  summary_table <- rbind(summary_table, data.frame(Sample = sample_label,
+                                                   Upregulated = upregulated_count,
+                                                   Downregulated = downregulated_count,
+                                                   Not_Dysregulated = not_dysregulated_count))
+  return(summary_table)
+}
+
+### Generate MA Plots for all samples
+
+# Initialize an empty summary table
+summary_table <- data.frame(Sample = character(),
+                            Upregulated = integer(),
+                            Downregulated = integer(),
+                            Not_Dysregulated = integer(),
+                            stringsAsFactors = FALSE)
+
+# Loop through each sample and generate MA plots
+for (sample in levels(all_df$sample)) {
+  sample_data <- all_df %>% filter(sample == !!sample)
+  output_file <- paste0(plot_dir, "Figure_5_A_MA_", sample, ".pdf")
+  summary_table <- create_ma_plot(sample_data, sample, output_file, summary_table)
+}
+
+# Save the summary table as CSV
+write.csv(summary_table, "/g/furlong/project/92_SPT4_SPT5/RNA-Seq/niklas_additional_analysis/MeanAverage_plots/summary_table.csv", row.names = FALSE)
+
+```
+
+
+
+
+```{r figure_5_B_log2FC_BLDark_vs_log2FC_baseMean}
+# Pakete laden
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+library(reshape2)
+library(introdataviz)
+library(ggpmisc)
+library(ggpubr)
+
+options(scipen=999)
+
+# Daten laden
+FPKMs <- read_tsv("/g/furlong/project/85_seqFISH/data/gene_expression/gene_expression_across_embryogenesis_FPKM.txt")
+all_genes <- read.table("/g/furlong/project/92_SPT4_SPT5/Depletion_CUTnTag/niklas_additional_analysis/bed_files/all_filtered_genes.bed")
+
+# Funktion zur Definition der on-off Kategorien
+define_categories <- function(data, time_start, time_end, threshold = 1) {
+  list(
+    aa = data %>% filter(!!sym(time_start) > threshold & !!sym(time_end) > threshold),
+    ai = data %>% filter(!!sym(time_start) > threshold & !!sym(time_end) < threshold),
+    ia = data %>% filter(!!sym(time_start) < threshold & !!sym(time_end) > threshold)
+  )
+}
+
+# Funktion zum Hinzufügen von DESeq-Ergebnissen und Filtern nach signifikanten Genen
+add_deseq_results <- function(category, deseq_path) {
+  deseq <- read.table(deseq_path)
+  deseq$gene_ID <- rownames(deseq)
+  merged <- merge(category, deseq, by = "gene_ID")
+  filtered <- merged %>% filter(padj < 0.01 & abs(log2FoldChange) > 1)
+  return(filtered %>% mutate(sign_l2FC = ifelse(log2FoldChange > 1, "up", "down")))
+}
+
+# Funktion zum Hinzufügen von Genlängen
+add_gene_length <- function(data, all_genes, time_label) {
+  merged <- merge(data, all_genes, by.x = "gene_ID", by.y = "V4")
+  merged$length <- merged$V3 - merged$V2
+  merged$time <- time_label
+  return(merged)
+}
+
+# Kategorien definieren und DESeq-Ergebnisse hinzufügen für alle Zeitpunkte
+time_points <- list(
+  BL812 = c("6-8h", "10-12h", "/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_8-12h/tables/conditionBL812h_VS_conditionDark.tsv"),
+  BL1216 = c("10-12h", "14-16h", "/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_12-16h/tables/conditionBL1216h_VS_conditionDark.tsv"),
+  BL1620 = c("14-16h", "18-20h", "/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_16-20h/tables/conditionBL1620h_VS_conditionDark.tsv"),
+  BL820 = c("6-8h", "18-20h", "/g/furlong/project/92_SPT4_SPT5/RNA-Seq/analysis/DESeq/SPT5longLEXY_16-20h/tables/conditionBL820h_VS_conditionDark.tsv")
+)
+
+
+aa_df <- do.call(rbind, lapply(names(time_points), function(name) {
+  times <- time_points[[name]]
+  categories <- define_categories(FPKMs, times[1], times[2])
+  aa <- add_deseq_results(categories$aa, times[3])
+  add_gene_length(aa, all_genes, name)
+}))
+
+aa_df$time <- factor(aa_df$time, levels = names(time_points))
+
+
+# Split Violin Plot für basale Expression
+aa_df$basal_exp_fpkm <- with(aa_df, as.numeric(ifelse(time == "BL812", `6-8h`, 
+                                                      ifelse(time == "BL1216", `10-12h`, 
+                                                             ifelse(time == "BL1620", `14-16h`, 
+                                                                    ifelse(time == "BL820", `6-8h`, `gene_ID`))))))
+
+
+ai_df <- do.call(rbind, lapply(names(time_points), function(name) {
+  times <- time_points[[name]]
+  categories <- define_categories(FPKMs, times[1], times[2])
+  ai <- add_deseq_results(categories$ai, times[3])
+  if (nrow(ai) == 0) {
+    return(NULL)  
+  }
+  add_gene_length(ai, all_genes, name)
+}))
+
+ai_df$time <- factor(ai_df$time, levels = names(time_points))
+
+
+ai_df$basal_exp_fpkm <- with(ai_df, ifelse(time == "BL8-12h", `6-8h`, ifelse(time == "BL12-16h", `10-12h`, ifelse(time == "BL16-20h", `14-16h`, `6-8h`))))
+
+
+ia_df <- do.call(rbind, lapply(names(time_points), function(name) {
+  times <- time_points[[name]]
+  categories <- define_categories(FPKMs, times[1], times[2])
+  ia <- add_deseq_results(categories$ia, times[3])
+  if (nrow(ia) == 0) {
+    return(NULL)  
+  }
+  add_gene_length(ia, all_genes, name)
+}))
+
+ia_df$time <- factor(ia_df$time, levels = names(time_points))
+
+ia_df$basal_exp_fpkm <- with(ia_df, ifelse(time == "BL8-12h", `6-8h`, ifelse(time == "BL12-16h", `10-12h`, ifelse(time == "BL16-20h", `14-16h`, `6-8h`))))
+
+calculate_and_add_ratios <- function(df, early_col, late_col, ratio_col_name, log_ratio_col_name) {
+  df <- df %>%
+    mutate(
+      early_col_adj = ifelse(!!sym(early_col) < 0.0000001, 1, !!sym(early_col)),
+      !!ratio_col_name := !!sym(late_col) / early_col_adj
+    ) %>%
+    mutate(
+      !!log_ratio_col_name := log2(!!sym(ratio_col_name))
+    ) %>%
+    select(-early_col_adj)  # Entferne die Hilfsspalte, wenn nicht benötigt
+  
+  return(df)
+}
+
+
+dataframes_812 <- list(
+  BL812_aa = aa_df %>% filter(time == "BL812"),
+  BL812_ai = ai_df %>% filter(time == "BL812"), 
+  BL812_ia = ia_df %>% filter(time == "BL812")  
+)
+
+time_periods_812 <- list(
+  BL812_aa = list(early = "6-8h", late = "10-12h"),
+  BL812_ai = list(early = "6-8h", late = "10-12h"),
+  BL812_ia = list(early = "6-8h", late = "10-12h")
+)
+
+for (df_name in names(dataframes_812)) {
+  df <- dataframes_812[[df_name]]
+  if (nrow(df) > 0) {  
+    early_col <- time_periods_812[[df_name]]$early
+    late_col <- time_periods_812[[df_name]]$late
+    
+    df_with_ratio <- calculate_and_add_ratios(df, early_col, late_col, "ratio_basal_expression", "log2_ratio_basal_expression")
+    
+    assign(df_name, df_with_ratio)
+  }
+}
+
+combined_df_812 <- bind_rows(
+  BL812_aa %>% mutate(Category = "aa"),
+  #BL812_ai %>% mutate(Category = "ai"),  #empty
+  BL812_ia %>% mutate(Category = "ia")
+)
+
+
+dataframes_1216 <- list(
+  BL1216_aa = aa_df %>% filter(time == "BL1216"),
+  BL1216_ai = ai_df %>% filter(time == "BL1216"), 
+  BL1216_ia = ia_df %>% filter(time == "BL1216")  
+)
+
+time_periods_1216 <- list(
+  BL1216_aa = list(early = "10-12h", late = "14-16h"),
+  BL1216_ai = list(early = "10-12h", late = "14-16h"),
+  BL1216_ia = list(early = "10-12h", late = "14-16h")
+)
+
+for (df_name in names(dataframes_1216)) {
+  df <- dataframes_1216[[df_name]]
+  if (nrow(df) > 0) {  
+    early_col <- time_periods_1216[[df_name]]$early
+    late_col <- time_periods_1216[[df_name]]$late
+    
+    df_with_ratio <- calculate_and_add_ratios(df, early_col, late_col, "ratio_basal_expression", "log2_ratio_basal_expression")
+    
+    assign(df_name, df_with_ratio)
+  }
+}
+
+combined_df_1216 <- bind_rows(
+  BL1216_aa %>% mutate(Category = "aa"),
+  BL1216_ai %>% mutate(Category = "ai"),  #empty
+  BL1216_ia %>% mutate(Category = "ia")
+)
+
+
+dataframes_1620 <- list(
+  BL1620_aa = aa_df %>% filter(time == "BL1620"),
+  BL1620_ai = ai_df %>% filter(time == "BL1620"), 
+  BL1620_ia = ia_df %>% filter(time == "BL1620")  
+)
+
+time_periods_1620 <- list(
+  BL1620_aa = list(early = "14-16h", late = "18-20h"),
+  BL1620_ai = list(early = "14-16h", late = "18-20h"),
+  BL1620_ia = list(early = "14-16h", late = "18-20h")
+)
+
+for (df_name in names(dataframes_1620)) {
+  df <- dataframes_1620[[df_name]]
+  if (nrow(df) > 0) { 
+    early_col <- time_periods_1620[[df_name]]$early
+    late_col <- time_periods_1620[[df_name]]$late
+    
+    df_with_ratio <- calculate_and_add_ratios(df, early_col, late_col, "ratio_basal_expression", "log2_ratio_basal_expression")
+    
+    assign(df_name, df_with_ratio)
+  }
+}
+
+combined_df_1620 <- bind_rows(
+  BL1620_aa %>% mutate(Category = "aa"),
+  BL1620_ai %>% mutate(Category = "ai"), 
+  BL1620_ia %>% mutate(Category = "ia")
+)
+
+dataframes_820 <- list(
+  BL820_aa = aa_df %>% filter(time == "BL820"),
+  BL820_ai = ai_df %>% filter(time == "BL820"), 
+  BL820_ia = ia_df %>% filter(time == "BL820")  
+)
+
+time_periods_820 <- list(
+  BL820_aa = list(early = "6-8h", late = "18-20h"),
+  BL820_ai = list(early = "6-8h", late = "18-20h"),
+  BL820_ia = list(early = "6-8h", late = "18-20h")
+)
+
+
+for (df_name in names(dataframes_820)) {
+  df <- dataframes_820[[df_name]]
+  if (nrow(df) > 0) {  
+    early_col <- time_periods_820[[df_name]]$early
+    late_col <- time_periods_820[[df_name]]$late
+    
+    # Berechnung und Hinzufügen der Ratio
+    df_with_ratio <- calculate_and_add_ratios(df, early_col, late_col, "ratio_basal_expression", "log2_ratio_basal_expression")
+
+    assign(df_name, df_with_ratio)
+  }
+}
+
+combined_df_820 <- bind_rows(
+  BL820_aa %>% mutate(Category = "aa"),
+  BL820_ai %>% mutate(Category = "ai"),  
+  BL820_ia %>% mutate(Category = "ia")
+)
+
+
+combined_df_820$regulation <- ifelse(combined_df_820$log2FoldChange > 0, "Upregulated", "Downregulated")
+
+
+# Erstellen des Scatterplots mit den Annotations für die Quadranten
+scatter_plot_combined_all_categories <- ggplot(combined_df_820, aes(x = log2FoldChange, y = log2_ratio_basal_expression)) +
+  geom_point(aes(color = sign_l2FC)) +  
+  scale_color_manual(values = c("#298c8c", "#f1a226"), 
+                     labels = c("Downregulated", "Upregulated"), 
+                     guide = guide_legend(title = NULL)) + 
+
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey", size = 2) +
+  geom_vline(xintercept = -1, linetype = "dashed", color = "grey", size = 2) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "grey", size = 2) +
+  labs(title = "BL820",
+       x = expression(log[2]('Blue Light / Dark')),
+       y = expression(log[2]('WT 20h / WT 8h')),
+       family = "Calibri") +
+  theme_classic() +
+  theme(
+    text = element_text(size = 18 , face = "plain"),   
+    axis.title = element_text(size = 16, face = "plain"),         
+    axis.text = element_text(size = 14, face = "plain"),              
+    legend.title = element_text(size = 12, face = "plain"),           
+    legend.text = element_text(size = 10, face = "plain"),             
+    panel.background = element_rect(fill = "white")
+  ) 
+
+
+ggsave(filename = paste0(plot_dir, "Figure_5_E_scatterplot_log2FC_BL_vs_baseMean.pdf"),
+       plot = scatter_plot_combined_all_categories,
+       width = 8, 
+       height = 6,
+       units = "in")
+
+
+## Berechnung der Anzahl der Datenpunkte in jedem Quadranten
+bottom_left <- sum(combined_df_820$log2FoldChange < 0 & combined_df_820$log2_ratio_basal_expression < 0)
+top_left <- sum(combined_df_820$log2FoldChange < 0 & combined_df_820$log2_ratio_basal_expression > 0)
+top_right <- sum(combined_df_820$log2FoldChange > 0 & combined_df_820$log2_ratio_basal_expression > 0)
+bottom_right <- sum(combined_df_820$log2FoldChange > 0 & combined_df_820$log2_ratio_basal_expression < 0)
+
+# Tabelle erstellen
+result_df <- data.frame(
+  Position = c("Bottom Left", "Top Left", "Top Right", "Bottom Right"),
+  Count = c(bottom_left, top_left, top_right, bottom_right)
+)
+
+
+
+# Tabelle in einer Datei speichern (z.B. CSV)
+write.csv(result_df, paste0(plot_dir, "Figure_5_E_scatterplot_log2FC_BL_vs_baseMean_stats.csv"), row.names = FALSE)
+
+
+```
+
+```{r figure_5_D_dysregulated_constitutively_expressed_genes}
+# Berechne den Median für jede Kombination aus time und sign_l2FC
+median_values <- aa_df %>%
+  group_by(time, sign_l2FC) %>%
+  summarize(median_basal_exp_fpkm = median(basal_exp_fpkm, na.rm = TRUE)) %>%
+  ungroup()
+
+# Speichere die Mediane in einer .csv-Datei
+write.csv(median_values, file = paste0(plot_dir, "Figure_5_D_dysregulated_constitutively_expressed_genes_stats.csv"), row.names = FALSE)
+
+#aa_df <- aa_df %>%
+#  filter(!is.na(sign_l2FC) & !is.na(basal_exp_fpkm))
+
+p_values <- aa_df %>%
+  group_by(time) %>%
+  summarize(p_value = wilcox.test(basal_exp_fpkm ~ sign_l2FC)$p.value)
+
+# Formatiere die p-Werte in wissenschaftlicher Notation und runde auf 2 Nachkommastellen
+p_values <- p_values %>%
+  mutate(p_label = format.pval(p_value, digits = 2, scientific = TRUE))
+
+aa_violin_expression <- ggplot(aa_df, aes(time, basal_exp_fpkm, fill = sign_l2FC)) +
+  introdataviz::geom_split_violin() +
+  geom_boxplot(aes(group = interaction(sign_l2FC, time)), 
+               width = 0.1, fill = "white", 
+               outlier.shape = NA, coef = 0) +
+  scale_y_log10() +
+  annotation_logticks(side = "l") +
+  scale_fill_manual(values = c("#298c8c", "#f1a226")) +  
+  labs(title = "on-on", x = "time window", y = "basal expression [FPKM]", fill = "dysregulation") +
+  theme_classic() +
+  theme(
+    text = element_text(size = 18 , face = "bold"),   
+    axis.title = element_text(size = 16, face = "plain"),         
+    axis.text = element_text(size = 14, face = "plain"),              
+    legend.title = element_text( size = 12, face = "plain"),           
+    legend.text = element_text(size = 10, face = "plain"),             
+    panel.background = element_rect(fill = "white")
+  )
+
+# Füge die berechneten p-Werte manuell mit geom_text hinzu
+aa_violin_expression <- aa_violin_expression + 
+  geom_text(data = p_values, aes(x = time, y = 10500, label = p_label), size = 3, inherit.aes = FALSE)
+
+
+ggsave(filename = paste0(plot_dir, "Figure_5_D_violin_expression.pdf"),
+       plot = aa_violin_expression, 
+       width = 8, 
+       height = 6, 
+       units = "in")
+```
+
+
+

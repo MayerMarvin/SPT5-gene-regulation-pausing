@@ -1,0 +1,579 @@
+shell.executable("/bin/bash")
+shell.prefix("source /g/furlong/forneris/software/Anaconda3/etc/profile.d/conda.sh; ") 
+
+import pandas as pd
+
+configfile: "../../../config/Depletion_CUTnTag_config.yml"
+# There is also a config_plotting_dag.yml with only one example for visualization of the snakemake pipeline
+
+
+# Variables
+CUTnTAG_LINES = list(set(config["CUTnTag_samples"].keys()))
+CUTnTAG_ANTIBODIES = list(set([antibody for line in CUTnTAG_LINES for antibody in list(config["CUTnTag_samples"][line].keys())]))
+CUTnTAG_LINE_ANTOBODY = list(set([tuple([line, antibody]) for line in CUTnTAG_LINES for antibody in list(config["CUTnTag_samples"][line].keys())]))
+CUTnTAG_LINE_ANTOBODY_CONTRAST = list(set([tuple([line, antibody]) for line in CUTnTAG_LINES for antibody in list(config["CUTnTag_samples"][line].keys()) if len(list(config["CUTnTag_samples"][line][antibody])) > 1 ]))
+CUTnTAG_CONDITIONS = list(set([condition for line, antibody in CUTnTAG_LINE_ANTOBODY for condition in list(config["CUTnTag_samples"][line][antibody].keys())]))
+CUTnTAG_LINE_ANTIBODY_CONDITIONS = list(set([tuple([line, antibody, condition]) for line, antibody in CUTnTAG_LINE_ANTOBODY for condition in list(config["CUTnTag_samples"][line][antibody].keys())]))
+CUTnTAG_SAMPLES = [sample for line, antibody, condition in CUTnTAG_LINE_ANTIBODY_CONDITIONS for sample in config["CUTnTag_samples"][line][antibody][condition]]
+CUTnTAG_LINE_ANTIBODY_CONDITIONS_REPS = list(set([tuple([line, antibody, condition]) for line, antibody, condition in CUTnTAG_LINE_ANTIBODY_CONDITIONS if len(config["CUTnTag_samples"][line][antibody][condition]) > 1]))
+SPECIES =  [item for sublist in [config["species"]] for item in sublist]
+
+# Paths
+CONFIG_DIR = config["global"]["config_dir"]
+ENVS_DIR = config["global"]["envs_dir"]
+PROJECT_DIR = config["global"]["project_dir"]
+FASTQ_DIR = PROJECT_DIR + config["global"]["fastq_dir"]
+SCRATCH_TEMP_DIR = config["global"]["scratch_temp_dir"]
+QC_DIR = PROJECT_DIR + config["global"]["qc_dir"]
+BAM_DIR = PROJECT_DIR + config["global"]["bam_dir"]
+BW_DIR = PROJECT_DIR + config["global"]["bw_dir"]
+
+# Targets
+## Mapping
+TRIMMED_OUT = expand("{path}/trimmed/{sample}_{rep}_val_{rep}.fq.gz", path=SCRATCH_TEMP_DIR, sample = CUTnTAG_SAMPLES, rep=["1", "2"])
+MAPPED_OUT = expand("{path}/mapped/{sample}_Dmel_Dvir.bam", path=SCRATCH_TEMP_DIR, sample = CUTnTAG_SAMPLES)
+MARKDUPLICATES_OUT = expand("{path}/mark_duplicates/{sample}_Dmel_Dvir_MarkDuplicates.bam", path=SCRATCH_TEMP_DIR, sample = CUTnTAG_SAMPLES)
+FILTERED_OUT = expand("{path}/filtered/{sample}_Dmel_Dvir_filtered.bam", path=SCRATCH_TEMP_DIR, sample = CUTnTAG_SAMPLES)
+SEPARATED_OUT = expand("{path}/{sample}_filtered_{species}.bam", path=BAM_DIR, sample = CUTnTAG_SAMPLES, species=SPECIES)
+RPKM_BW_OUT = expand("{path}/RPKM/{sample}_{species}_RPKM_normalized.bw", path=BW_DIR, sample = CUTnTAG_SAMPLES, species=SPECIES)
+MERGE_RPKM_BW_OUT = [BW_DIR + "/RPKM/" + line + "." + condition + "_mean_rep_" + antibody + "_" + species + "_RPKM_normalized.bw" for line, antibody, condition in CUTnTAG_LINE_ANTIBODY_CONDITIONS_REPS for species in SPECIES]
+MAPPING_PIPELINE_OUT = TRIMMED_OUT + MAPPED_OUT + MARKDUPLICATES_OUT + FILTERED_OUT + SEPARATED_OUT + RPKM_BW_OUT + MERGE_RPKM_BW_OUT
+## QC computation
+FASTQC_OUT = expand("{path}/fastqc/{sample}_{end}_fastqc.html", path=QC_DIR, sample = CUTnTAG_SAMPLES, end=["1", "2"])
+FASTQ_SCREEN_OUT = expand("{path}/fastq_screen/{sample}_1_screen.html", path=QC_DIR, sample = CUTnTAG_SAMPLES)
+FRAGMENT_LENGTH_OUT = expand("{path}/deeptools_fraglen/fragment_length_distribution_{sample}.txt", path=QC_DIR, sample = CUTnTAG_SAMPLES)
+INSERT_SIZE_OUT = expand("{path}/picard/insert_size_{sample}.txt", path=QC_DIR, sample = CUTnTAG_SAMPLES)
+FLAGSTAT_OUT = expand("{path}/flagstat/{sample}_flagstat.txt", path=QC_DIR, sample = CUTnTAG_SAMPLES)
+SUMMARY_ALIGNMENT_OUT = expand("{path}/picard/{sample}_CollectAlignmentSummaryMetrics.txt", path=QC_DIR, sample = CUTnTAG_SAMPLES)
+LIBRARY_COMPLEXITY_OUT = expand("{path}/picard/{sample}_EstimateLibraryComplexity.txt", path=QC_DIR, sample = CUTnTAG_SAMPLES)
+FINGERPRINT_OUT = expand("{path}/fingerprint/{sample}_plotFingerprint.txt", path=QC_DIR, sample = CUTnTAG_SAMPLES)
+QC_COMPUTE_PIPELINE_OUT = FASTQC_OUT + FASTQ_SCREEN_OUT + FRAGMENT_LENGTH_OUT + INSERT_SIZE_OUT + FLAGSTAT_OUT + SUMMARY_ALIGNMENT_OUT + LIBRARY_COMPLEXITY_OUT + FINGERPRINT_OUT
+## Finalise QC
+CORRELATIONS_RPKM_OUT = [QC_DIR + "/sample_correlation/sample_correlation_RPKM_" + line + "_By" + antibody + "_pearson_" + species + ".pdf" for line, antibody in CUTnTAG_LINE_ANTOBODY_CONTRAST for species in SPECIES]
+MULTIQC_OUT = expand("{path}/MultiQC_global_report.html", path=QC_DIR)
+FINALISE_QC_OUT = CORRELATIONS_RPKM_OUT + MULTIQC_OUT
+# Spike-in correction
+SAMPLES_TABLE = [CONFIG_DIR + "/samples_SpikeIn_" + line + "." + antibody + ".csv" for line, antibody in CUTnTAG_LINE_ANTOBODY]
+SPIKE_IN_BW_OUT = [BW_DIR + "/spikeIn/spikeIn_scaling_factors_" + line + "." + antibody + ".log" for line, antibody in CUTnTAG_LINE_ANTOBODY]
+MERGE_SPIKEIN_OUT = [BW_DIR + "/spikeIn/" + line + "." + condition + "_mean_rep_" + antibody + "_SpikedIn.bw" for line, antibody, condition in CUTnTAG_LINE_ANTIBODY_CONDITIONS_REPS]
+SPIKEIN_PIPELINE_OUT = SAMPLES_TABLE + SPIKE_IN_BW_OUT + MERGE_SPIKEIN_OUT
+
+
+rule all:
+    input:
+        MAPPING_PIPELINE_OUT, QC_COMPUTE_PIPELINE_OUT, FINALISE_QC_OUT, SPIKEIN_PIPELINE_OUT
+
+
+
+rule TrimGalore:
+    input:
+        fq1 = expand("{path}/{{sample}}_1.fastq.gz", path=FASTQ_DIR),
+        fq2 = expand("{path}/{{sample}}_2.fastq.gz", path=FASTQ_DIR)
+    output:
+        fq1 = expand("{path}/trimmed/{{sample}}_1_val_1.fq.gz", path=SCRATCH_TEMP_DIR),
+        fq2 = expand("{path}/trimmed/{{sample}}_2_val_2.fq.gz", path=SCRATCH_TEMP_DIR)
+    resources:
+        cpu = 8,
+        memPerCpu = 2000,
+        time = 120
+    params:
+        out_dir = SCRATCH_TEMP_DIR + "/trimmed"
+    conda: ENVS_DIR + "/trimgalore_env.yml" # version 0.6.7
+    shell:
+        """
+        mkdir -p {SCRATCH_TEMP_DIR}
+        mkdir -p {params.out_dir}
+
+        trim_galore --paired {input.fq1} {input.fq2} \
+        -j {resources.cpu} -o {params.out_dir}
+        """
+
+
+rule map_to_Dmel_Dvir_joint_genome:
+    input:
+        fq1 = expand("{path}/trimmed/{{sample}}_1_val_1.fq.gz", path=SCRATCH_TEMP_DIR),
+        fq2 = expand("{path}/trimmed/{{sample}}_2_val_2.fq.gz", path=SCRATCH_TEMP_DIR)
+    output:
+        bam = expand("{path}/mapped/{{sample}}_Dmel_Dvir.bam", path=SCRATCH_TEMP_DIR)
+    resources:
+        cpu = 8,
+        memPerCpu = 4000,
+        time = 360
+    params:
+        index = config["annotation"]["bwa_joint_index"],
+        output_dir = SCRATCH_TEMP_DIR + "/mapped",
+        temp_file = lambda wildcards: SCRATCH_TEMP_DIR + "/mapped/{sample}.temp"
+    conda: ENVS_DIR + "/bwa_env.yml" # version 0.17.7
+    shell:
+        """
+        mkdir -p {params.output_dir}
+
+        bwa mem -t {resources.cpu} -o {output.bam}.temp.sam \
+        {params.index} {input.fq1} {input.fq2}
+        
+        samtools sort -n -@ {resources.cpu} {output.bam}.temp.sam \
+        -T {params.temp_file} | samtools view -b > {output.bam}
+
+        rm {output.bam}.temp*
+        """
+
+
+rule mark_duplicates:
+    input:
+        expand("{path}/mapped/{{sample}}_Dmel_Dvir.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        bam = expand("{path}/mark_duplicates/{{sample}}_Dmel_Dvir_MarkDuplicates.bam", path=SCRATCH_TEMP_DIR),
+        metrics = expand("{path}/mark_duplicates/{{sample}}_Dmel_Dvir_MarkDuplicates_metrics.txt", path=QC_DIR)
+    resources:
+        cpu = 8,
+        memPerCpu = 4000,
+        time = 120
+    params:
+        output_dir = QC_DIR + "/mark_duplicates",
+        scratch_dir = SCRATCH_TEMP_DIR + "/mark_duplicates",
+        temp_file = lambda wildcards: SCRATCH_TEMP_DIR + "/mark_duplicates/{sample}.temp"
+    conda: ENVS_DIR + "/picard_env.yml" # version 3.0.0
+    shell:
+        """
+        mkdir -p {params.output_dir}
+        mkdir -p {params.scratch_dir}
+
+        picard MarkDuplicates -I {input} -O {output.bam}.temp.bam \
+        -M {output.metrics} -ASO queryname
+
+        samtools sort -@ {resources.cpu} -T {params.temp_file} \
+        -o {output.bam} {output.bam}.temp.bam
+        samtools index {output}
+
+        rm {output.bam}.temp*
+        """
+
+
+rule filter_bam:
+    input:
+        expand("{path}/mark_duplicates/{{sample}}_Dmel_Dvir_MarkDuplicates.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        expand("{path}/filtered/{{sample}}_Dmel_Dvir_filtered.bam", path=SCRATCH_TEMP_DIR)
+    resources:
+        cpu = 8,
+        memPerCpu = 4000,
+        time = 120
+    params:
+        min_mapping_quality = config["parameters_mapping"]["mapping"]["min_mapping_quality"],
+        max_fragment_length = config["parameters_mapping"]["mapping"]["max_fragment_length"],
+        output_dir = SCRATCH_TEMP_DIR + "/filtered"
+    conda: ENVS_DIR + "/samtools_env.yml" # version 1.16.1
+    shell:
+        """
+        mkdir -p {params.output_dir}
+
+        samtools view -h -F 3840 -f 3 -q {params.min_mapping_quality} {input} \
+        | awk 'substr($0,1,1) == "@" || (sqrt($9^2) > 0 && sqrt($9^2) <= {params.max_fragment_length})' \
+        | samtools sort -@ {resources.cpu} - | samtools view -b  - > {output}
+
+        samtools index {output}
+        """
+
+
+rule separate_genomes:
+    input:
+        expand("{path}/filtered/{{sample}}_Dmel_Dvir_filtered.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        Dmel = expand("{path}/{{sample}}_filtered_Dmel.bam", path=BAM_DIR),
+        Dvir = expand("{path}/{{sample}}_filtered_Dvir.bam", path=BAM_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 120
+    params:
+        endo_chrsize_bed = config["annotation"]["endo_chrsize_bed"],
+        exo_chrsize_bed = config["annotation"]["exo_chrsize_bed"],
+        output_dir = BAM_DIR
+    conda: ENVS_DIR + "/samtools_env.yml" # version 1.16.1
+    shell:
+        """
+        mkdir -p {params.output_dir}
+
+        samtools view -b {input} -L {params.endo_chrsize_bed} > {output.Dmel}
+        samtools index {output.Dmel}
+        samtools view -b {input} -L {params.exo_chrsize_bed} > {output.Dvir}
+        samtools index {output.Dvir}
+        """
+
+
+rule coverage_no_spikeIn_RPKM_correction:
+    input:
+        expand("{path}/{{sample}}_filtered_{{species}}.bam", path=BAM_DIR)
+    output:
+        expand("{path}/RPKM/{{sample}}_{{species}}_RPKM_normalized.bw", path=BW_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 8000,
+        time = 120
+    params:
+        endo_chrsize_bed = config["annotation"]["endo_chrsize_bed"],
+        exo_chrsize_bed = config["annotation"]["exo_chrsize_bed"],
+        bin_size = config["parameters_mapping"]["coverage_noSpikeIn"]["bin_size"],
+        norm_method = config["parameters_mapping"]["coverage_noSpikeIn"]["normalization_method"]
+    conda: ENVS_DIR + "/deeptools_env.yml" # version 3.5.4
+    shell:
+        """
+        if [[ {wildcards.species} == {SPECIES[0]} ]]; then
+            EFFECTIVE_GENOME_SIZE=`cat {params.endo_chrsize_bed} \
+                | awk '{{sum += $3}} END {{print sum}}'`
+        elif [[ {wildcards.species} == {SPECIES[1]} ]]; then
+            EFFECTIVE_GENOME_SIZE=`cat {params.exo_chrsize_bed} \
+                | awk '{{sum += $3}} END {{print sum}}'`
+        fi
+
+        bamCoverage -b {input} -o {output} \
+        --binSize {params.bin_size} --normalizeUsing {params.norm_method} \
+        --exactScaling --extendReads --ignoreDuplicates \
+        --effectiveGenomeSize $EFFECTIVE_GENOME_SIZE
+        """
+
+
+rule merge_coverage_replicates_RPKM_bigwigs:
+    input:
+        rep1 = lambda wildcards: expand("{path}/RPKM/{sample}_{{species}}_RPKM_normalized.bw", path=BW_DIR, sample=config["CUTnTag_samples"][wildcards.line][wildcards.antibody][wildcards.condition][0]),
+        rep2 = lambda wildcards: expand("{path}/RPKM/{sample}_{{species}}_RPKM_normalized.bw", path=BW_DIR, sample=config["CUTnTag_samples"][wildcards.line][wildcards.antibody][wildcards.condition][1])
+    output:
+        expand("{path}/RPKM/{{line}}.{{condition}}_mean_rep_{{antibody}}_{{species}}_RPKM_normalized.bw", path=BW_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 120
+    params:
+        bin_size = config["parameters_mapping"]["coverage_noSpikeIn"]["bin_size"]
+    conda: ENVS_DIR + "/deeptools_env.yml" # version 3.5.4
+    shell:
+        """
+        bigwigCompare --bigwig1 {input.rep1} --bigwig2 {input.rep2} \
+        --binSize {params.bin_size} --operation mean --outFileName {output}
+        """
+
+
+
+###############
+# QC pipeline #
+###############
+
+
+rule run_fastqc:
+    input:
+        fq = expand("{path}/{{sample}}_{{end}}.fastq.gz", path=FASTQ_DIR),
+    output:
+        expand("{path}/fastqc/{{sample}}_{{end}}_fastqc.html", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 120
+    params:
+        out_dir = QC_DIR + "/fastqc"
+    conda: ENVS_DIR + "/fastqc_env.yml" # version 0.11.9
+    shell:
+        """
+        mkdir -p {params.out_dir}
+
+        fastqc {input.fq} -o {params.out_dir}
+        """
+
+
+rule fastq_screen:
+    input:
+        expand("{path}/{{sample}}_1.fastq.gz", path=FASTQ_DIR)
+    output:
+        expand("{path}/fastq_screen/{{sample}}_1_screen.html", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 8000,
+        time = 120
+    params:
+        n_sequences = config["parameters_mapping"]["fastq_screen"]["n_sequences"],
+        aligner = config["parameters_mapping"]["fastq_screen"]["aligner"],
+        config_file = CONFIG_DIR + "/fastq_screen.conf",
+        out_dir = QC_DIR + "/fastq_screen"
+    conda: ENVS_DIR + "/fastq_screen_env.yml" # version 0.15.2, bowtie v. 2.4.5
+    shell:
+        """
+        mkdir -p {params.out_dir}
+
+        fastq_screen --aligner {params.aligner} --conf {params.config_file} \
+        --force --outdir {params.out_dir} --subset {params.n_sequences} \
+        --threads {resources.cpu} {input}
+        """
+
+
+rule fragment_length:
+    input:
+        expand("{path}/filtered/{{sample}}_Dmel_Dvir_filtered.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        png = expand("{path}/deeptools_fraglen/fragment_length_distribution_{{sample}}.png", path=QC_DIR),
+        txt = expand("{path}/deeptools_fraglen/fragment_length_distribution_{{sample}}.txt", path=QC_DIR),
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 120
+    params:
+        out_dir = QC_DIR + "/deeptools_fraglen"
+    conda: ENVS_DIR + "/deeptools_env.yml" # version 3.5.4
+    shell:
+        """
+        mkdir -p {params.out_dir}
+
+        bamPEFragmentSize --bamfiles {input} --histogram {output.png} \
+        --samplesLabel {wildcards.sample} --table {output.txt}
+        """
+
+
+rule insert_size:
+    input:
+        expand("{path}/filtered/{{sample}}_Dmel_Dvir_filtered.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        png = expand("{path}/picard/insert_size_{{sample}}.png", path=QC_DIR),
+        txt = expand("{path}/picard/insert_size_{{sample}}.txt", path=QC_DIR),
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 120
+    params:
+        out_dir = QC_DIR + "/picard"
+    conda: ENVS_DIR + "/picard_env.yml" # version 3.0.0
+    shell:
+        """
+        picard CollectInsertSizeMetrics -I {input} \
+        -O {output.txt} -H {output.png}
+        """
+
+
+rule samtools_flagstat:
+    input:
+        expand("{path}/mark_duplicates/{{sample}}_Dmel_Dvir_MarkDuplicates.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        expand("{path}/flagstat/{{sample}}_flagstat.txt", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 120
+    params:
+        out_dir = QC_DIR + "/flagstat"
+    conda: ENVS_DIR + "/samtools_env.yml" # version 1.16.1
+    shell:
+        """
+        mkdir -p {params.out_dir}
+
+        samtools flagstat {input} > {output}
+        """
+
+
+rule CollectAlignmentSummaryMetrics:
+    input:
+        expand("{path}/mark_duplicates/{{sample}}_Dmel_Dvir_MarkDuplicates.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        expand("{path}/picard/{{sample}}_CollectAlignmentSummaryMetrics.txt", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 120
+    params:
+        out_dir = QC_DIR + "/picard"
+    conda: ENVS_DIR + "/picard_env.yml" # version 3.0.0
+    shell:
+        """
+        mkdir -p {params.out_dir}
+
+        picard CollectAlignmentSummaryMetrics -I {input} -O {output}
+        """
+
+rule EstimateLibraryComplexity:
+    input:
+        expand("{path}/mark_duplicates/{{sample}}_Dmel_Dvir_MarkDuplicates.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        expand("{path}/picard/{{sample}}_EstimateLibraryComplexity.txt", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 120
+    params:
+        out_dir = QC_DIR + "/picard"
+    conda: ENVS_DIR + "/picard_env.yml" # version 3.0.0
+    shell:
+        """
+        mkdir -p {params.out_dir}
+
+        picard EstimateLibraryComplexity -I {input} -O {output}
+        """
+
+rule plotFingerprint:
+    input:
+        expand("{path}/filtered/{{sample}}_Dmel_Dvir_filtered.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        png = expand("{path}/fingerprint/{{sample}}_plotFingerprint.png", path=QC_DIR),
+        txt = expand("{path}/fingerprint/{{sample}}_plotFingerprint.txt", path=QC_DIR)
+    resources:
+        cpu = 8,
+        memPerCpu = 2000,
+        time = 120
+    params:
+        out_dir = QC_DIR + "/fingerprint"
+    conda: ENVS_DIR + "/deeptools_env.yml" #version 3.5.4
+    shell:
+        """
+        mkdir -p {params.out_dir}
+
+        plotFingerprint -b {input} -plot {output.png} \
+        -p {resources.cpu} --outQualityMetrics {output.txt}
+        """
+
+
+rule correlation_between_samples_by_antibody:
+    input:
+        samples = lambda wildcards: expand("{path}/RPKM/{sample}_{{species}}_RPKM_normalized.bw", path=BW_DIR, \
+            sample=[sample for condition in list(config["CUTnTag_samples"][wildcards.line][wildcards.antibody].keys()) \
+            for sample in config["CUTnTag_samples"][wildcards.line][wildcards.antibody][condition]])
+    output:
+        pearson = expand("{path}/sample_correlation/sample_correlation_RPKM_{{line}}_By{{antibody}}_pearson_{{species}}.pdf", path=QC_DIR),
+        spearman = expand("{path}/sample_correlation/sample_correlation_RPKM_{{line}}_By{{antibody}}_spearman_{{species}}.pdf", path=QC_DIR)
+    resources:
+        cpu = 8,
+        memPerCpu = 2000,
+        time = 120
+    params:
+        binSize = config["parameters_mapping"]["samples_correlation"]["bin_size"],
+        out_dir = QC_DIR + "/sample_correlation"
+    conda: ENVS_DIR + "/deeptools_env.yml"  #version 3.5.4
+    shell:
+        """
+        mkdir -p {params.out_dir}
+
+        multiBigwigSummary bins --bwfiles {input.samples} \
+        --binSize {params.binSize} --labels `ls {input.samples} \
+        | sed 's/.*\/RPKM\///g; s/_{wildcards.species}.*//; \
+        s/.*SPT5longLEXY[A-Za-z]*_[0-9-]*h_//g'` \ 
+        -p {resources.cpu} --outFileName {output.spearman}.temp.npz
+        
+        plotCorrelation --corMethod spearman --whatToPlot scatterplot \
+        --corData {output.spearman}.temp.npz --plotFileForm pdf \
+        --plotTitle "{wildcards.antibody} {wildcards.species}" \
+        -p "scatterplot" --removeOutliers -o {output.spearman}
+        
+        plotCorrelation --corMethod pearson --whatToPlot scatterplot \
+        --corData {output.spearman}.temp.npz --plotFileForm pdf \
+        --plotTitle "{wildcards.antibody} {wildcards.species}" \
+        -p "scatterplot" --removeOutliers -o {output.pearson}
+
+        rm {output.spearman}.temp*
+        """
+
+
+rule run_multiQC:
+    input:
+        QC_COMPUTE_PIPELINE_OUT
+    output:
+        expand("{path}/MultiQC_global_report.html", path=QC_DIR)
+    params:
+        out_dir = QC_DIR,
+        config = CONFIG_DIR + "/multiqc_config.yml"
+    resources:
+        cpu = 1,
+        memPerCpu = 2000,
+        time = 30
+    conda: ENVS_DIR + "/multiqc.yml" # version 1.17
+    shell:
+        """
+        export LC_ALL=en_US.utf-8
+        export LANG=en_US.utf-8
+
+        mkdir -p {params.out_dir}
+
+        multiqc --config {params.config} -n MultiQC_global_report.html \
+        -f -o {params.out_dir} {params.out_dir}
+
+        rm -fr {QC_DIR}/MultiQC_global_report_data
+        """
+
+
+
+################################
+# Spike-in factors and bigwigs #
+################################
+
+
+
+rule spikeIn_sample_file:
+    output:
+        expand("{path}/samples_SpikeIn_{{line}}.{{antibody}}.csv", path=CONFIG_DIR)
+    params:
+        samples = lambda wildcards: [sample for condition in list(config["CUTnTag_samples"][wildcards.line][wildcards.antibody].keys()) for sample in config["CUTnTag_samples"][wildcards.line][wildcards.antibody][condition]],
+        species = SPECIES
+    resources:
+        cpu = 1,
+        memPerCpu = 1000,
+        time = 10
+    run:
+        table = pd.DataFrame()
+        samples = pd.Series(params.samples)
+        endoFiles = samples + "_filtered_" + params.species[0] + ".bam"
+        exoFiles = samples + "_filtered_" + params.species[1] + ".bam"
+        table = table.assign(expName = samples, endogenousBam = endoFiles, exogenousBam = exoFiles)
+        table.to_csv(output[0], sep=",", index=False)
+
+
+rule spikeIn_correction_bigwigs:
+    input:
+        samples_table = expand("{path}/samples_SpikeIn_{{line}}.{{antibody}}.csv", path=CONFIG_DIR),
+        bam = SEPARATED_OUT
+    output:
+        log = expand("{path}/spikeIn/spikeIn_scaling_factors_{{line}}.{{antibody}}.log", path=BW_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 8000,
+        time = 240
+    params:
+        bam_dir = BAM_DIR,
+        out_dir = BW_DIR + "/spikeIn",
+        effective_genome_size = config["parameters_mapping"]["spikeIn_bigwig"]["effective_genome_size"],
+        bin_size = config["parameters_mapping"]["spikeIn_bigwig"]["bin_size"],
+        correction_type = config["parameters_mapping"]["spikeIn_bigwig"]["correction_type"],
+        spikeIn_correction_bin = config["tools"]["spikeIn_correction"]
+    conda: ENVS_DIR + "/spikeIn_correction_env.yml" # python version 3.10, deeptools 3.5.2
+    shell:
+        """
+        BAMCOVERAGE_BIN=`which bamCoverage`
+
+        mkdir -p {params.out_dir}
+
+        python {params.spikeIn_correction_bin} \
+        -n 1,2 -s {input.samples_table} -B {params.bam_dir} \
+        -b {params.out_dir} -c $BAMCOVERAGE_BIN \
+        -e {params.effective_genome_size} -S {params.bin_size} \
+        -t {params.correction_type} -o {output.log}
+        """
+
+
+rule merge_spikeIn_correction_replicates_bigwigs:
+    input:
+        SPIKE_IN_BW_OUT
+    output:
+        expand("{path}/spikeIn/{{line}}.{{condition}}_mean_rep_{{antibody}}_SpikedIn.bw", path=BW_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 120
+    params:
+        bin_size = config["parameters_mapping"]["spikeIn_bigwig"]["bin_size"],
+        rep1 = lambda wildcards: expand("{path}/spikeIn/{sample}_SpikedIn.bw", path=BW_DIR, sample=config["CUTnTag_samples"][wildcards.line][wildcards.antibody][wildcards.condition][0]),
+        rep2 = lambda wildcards: expand("{path}/spikeIn/{sample}_SpikedIn.bw", path=BW_DIR, sample=config["CUTnTag_samples"][wildcards.line][wildcards.antibody][wildcards.condition][1])
+    conda: ENVS_DIR + "/deeptools_env.yml" # version 3.5.4
+    shell:
+        """
+        bigwigCompare --bigwig1 {params.rep1} --bigwig2 {params.rep2} \
+        --binSize {params.bin_size} --operation mean --outFileName {output}
+        """
+
+
+# Create log directory for each rule
+for rule in workflow._rules:
+    path = "log/{rule}".format(rule=rule)
+    if not os.path.isdir(path):
+        os.makedirs(path)

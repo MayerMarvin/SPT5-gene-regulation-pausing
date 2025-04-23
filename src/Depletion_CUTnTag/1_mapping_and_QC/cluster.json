@@ -1,0 +1,11 @@
+{
+    "__default__" :
+    {
+      "sbatch" : "sbatch -o logs/{rule}.{wildcards}.%j.out -e logs/{rule}.{wildcards}.%j.out",
+      "partition" : "htc-el8",
+      "n" : "{resources.cpu}",
+      "memPerCpu" : "{resources.memPerCpu}",
+      "time" : "{resources.time}"
+    }
+  }
+  

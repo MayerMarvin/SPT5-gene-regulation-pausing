@@ -1,0 +1,67 @@
+{
+    "__default__" :
+    {
+      "sbatch" : "sbatch -o logs/{rule}.{wildcards}.%j.out -e logs/{rule}.{wildcards}.%j.out",
+      "partition" : "htc",
+      "n" : "1",
+      "mem" : "8G",
+      "moreoptions" : "-t 01:00:00"
+    },
+    "TrimGalore" :
+    {
+      "sbatch" : "sbatch -o logs/{rule}.{wildcards}.%j.out -e logs/{rule}.{wildcards}.%j.out",
+      "partition" : "htc-el8",
+      "n" : "8",
+      "mem" : "32G",
+      "moreoptions" : "-t 04:00:00"
+    },
+    "STAR_map" :
+    {
+      "sbatch" : "sbatch -o logs/{rule}.{wildcards}.%j.out -e logs/{rule}.{wildcards}.%j.out",
+      "partition" : "htc-el8",
+      "n" : "8",
+      "mem" : "32G",
+      "moreoptions" : "-t 04:00:00"
+    },
+    "sort_bam" :
+    {
+      "sbatch" : "sbatch -o logs/{rule}.{wildcards}.%j.out -e logs/{rule}.{wildcards}.%j.out",
+      "partition" : "htc-el8",
+      "n" : "8",
+      "mem" : "16G",
+      "moreoptions" : "-t 04:00:00"
+    },
+    "mark_duplicates" :
+    {
+      "sbatch" : "sbatch -o logs/{rule}.{wildcards}.%j.out -e logs/{rule}.{wildcards}.%j.out",
+      "partition" : "htc-el8",
+      "n" : "1",
+      "mem" : "16G",
+      "moreoptions" : "-t 04:00:00"
+    },
+    "multiBamSummary_all_samples" :
+    {
+      "sbatch" : "sbatch -o logs/{rule}.{wildcards}.%j.out -e logs/{rule}.{wildcards}.%j.out",
+      "partition" : "htc-el8",
+      "n" : "8",
+      "mem" : "16G",
+      "moreoptions" : "-t 04:00:00"
+    },
+    "create_bigwigs" :
+    {
+      "sbatch" : "sbatch -o logs/{rule}.{wildcards}.%j.out -e logs/{rule}.{wildcards}.%j.out",
+      "partition" : "htc-el8",
+      "n" : "1",
+      "mem" : "16G",
+      "moreoptions" : "-t 04:00:00"
+    },
+    "merge_replicates_bigwigs" :
+    {
+      "sbatch" : "sbatch -o logs/{rule}.{wildcards}.%j.out -e logs/{rule}.{wildcards}.%j.out",
+      "partition" : "htc-el8",
+      "n" : "1",
+      "mem" : "16G",
+      "moreoptions" : "-t 04:00:00"
+    }
+  }
+  

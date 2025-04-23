@@ -1,0 +1,361 @@
+configfile: "/g/furlong/project/92_SPT4_SPT5/RNA-Seq/config/RNAseq_config.yml"
+
+
+# Variables
+RNASEQ_LINES = list(config["RNA-Seq"].keys())
+RNASEQ_LINES_CONDITIONS = [[line, condition] for line in RNASEQ_LINES for condition in list(config["RNA-Seq"][line].keys())]
+RNASEQ_SAMPLES = [list(item.items())[0][0] for sublist in [config["RNA-Seq"][line][condition] for line, condition in RNASEQ_LINES_CONDITIONS] for item in sublist]
+SAMPLES_STRAND = {list(item.items())[0][0]: list(item.items())[0][1] for sublist in [config["RNA-Seq"][line][condition] for line, condition in RNASEQ_LINES_CONDITIONS] for item in sublist}
+
+# Paths
+PROJECT_DIR = config["global"]["projectpath"]
+RNA_SEQ_DIR = PROJECT_DIR + "/" + config["global"]["RNA-Seq_dir"]
+SCRATCH_TEMP_DIR = config["global"]["scratch_dir"]
+FASTQ_DIR = RNA_SEQ_DIR + "/" + config["global"]["fastq_dir"]
+QC_DIR = RNA_SEQ_DIR + "/" + config["global"]["qc_dir"]
+BIGWIG_DIR = RNA_SEQ_DIR + "/" + config["global"]["bigwig_dir"]
+
+# Annotation
+STAR_GENOME = config["annotation"]["star"]
+REF_FLAT = config["annotation"]["refflat"],
+RRNA_ANNOTATION = config["annotation"]["rrna"]
+
+# Targets
+TRIMGALORE_OUT = expand("{path}/TrimGalore/{sample}_2.fastq.gz_trimming_report.txt", path=QC_DIR, sample=RNASEQ_SAMPLES)
+STAR_OUT = expand("{path}/STAR/{sample}.Log.final.out", path=QC_DIR, sample=RNASEQ_SAMPLES)
+CLEAN_BAM_OUT = expand("{path}/mapped/{sample}.bam", path=SCRATCH_TEMP_DIR, sample=RNASEQ_SAMPLES)
+SORT_BAM_OUT = expand("{path}/mapped/{sample}_sorted.bam.bai", path=SCRATCH_TEMP_DIR, sample=RNASEQ_SAMPLES)
+MARKDUPLICATES_OUT = expand("{path}/markduplicates/{sample}.MarkDuplicates.txt", path=QC_DIR, sample=RNASEQ_SAMPLES)
+FASTQC_OUT = expand("{path}/fastqc/{sample}_{end}_fastqc.html", path=QC_DIR, sample=RNASEQ_SAMPLES, end=["1", "2"])
+FASTQ_SCREEN_OUT = expand("{path}/fastq_screen/{sample}_1_screen.html", path=QC_DIR, sample=RNASEQ_SAMPLES)
+RNA_METRICS_OUT = expand("{path}/rnaMetrics/{sample}_CollectRnaSeqMetrics.txt", path=QC_DIR, sample=RNASEQ_SAMPLES)
+INSERT_SIZE_OUT = expand("{path}/insert_size/{sample}_InserSizeMetrics.txt", path=QC_DIR, sample=RNASEQ_SAMPLES)
+SAMPLE_CORRELATION_OUT = expand("{path}/samples_correlation/multiBamSummary_all_samples_heatmap_{line}.pdf", path=QC_DIR, line=RNASEQ_LINES)
+MULTIQC_OUT = expand("{path}/multiqc_report.html", path=QC_DIR)
+BIGWIG_OUT = expand("{path}/{sample}_RPKM.bw", path=BIGWIG_DIR, sample=RNASEQ_SAMPLES)
+MERGED_BIGWIG_OUT = [BIGWIG_DIR + "/" + line + "_" + condition + "_MeanRep_RPKM.bw" for line, condition in RNASEQ_LINES_CONDITIONS]
+
+rule all:
+    input:
+        TRIMGALORE_OUT, STAR_OUT, CLEAN_BAM_OUT, SORT_BAM_OUT, \
+        FASTQC_OUT, FASTQ_SCREEN_OUT, MARKDUPLICATES_OUT, \
+        RNA_METRICS_OUT, INSERT_SIZE_OUT, 
+        MULTIQC_OUT, SAMPLE_CORRELATION_OUT, \
+        BIGWIG_OUT, MERGED_BIGWIG_OUT
+
+
+
+rule TrimGalore:
+    input:
+        fastq_1 = expand("{path}/{{sample}}_1.fastq.gz", path=FASTQ_DIR),
+        fastq_2 = expand("{path}/{{sample}}_2.fastq.gz", path=FASTQ_DIR),
+    output:
+        fastq_1 = expand("{path}/trimmed/{{sample}}_1_val_1.fq.gz", path=SCRATCH_TEMP_DIR),
+        fastq_2 = expand("{path}/trimmed/{{sample}}_2_val_2.fq.gz", path=SCRATCH_TEMP_DIR),
+        report1 = expand("{path}/TrimGalore/{{sample}}_1.fastq.gz_trimming_report.txt", path=QC_DIR),
+        report2 = expand("{path}/TrimGalore/{{sample}}_2.fastq.gz_trimming_report.txt", path=QC_DIR),
+    resources:
+        cpu = 8,
+        memPerCpu = 2000,
+        time = 120
+    threads: 8
+    params:
+        trim_quality = 20,
+        min_adapter_overlap = 2,
+        out_dir = expand("{path}/trimmed", path=SCRATCH_TEMP_DIR)
+    conda: 
+        "../../../config/trimgalore_env.yml" # version 0.6.7
+    shell:
+        """
+        trim_galore --paired {input.fastq_1} {input.fastq_2} \
+        -j {threads} -o {params.out_dir} \
+        -q {params.trim_quality} --stringency {params.min_adapter_overlap}
+
+        cp {params.out_dir}/{wildcards.sample}_1.fastq.gz_trimming_report.txt {output.report1}
+        cp {params.out_dir}/{wildcards.sample}_2.fastq.gz_trimming_report.txt {output.report2}
+        """
+
+rule STAR_map:
+    input:
+        fastq_1 = expand("{path}/trimmed/{{sample}}_1_val_1.fq.gz", path=SCRATCH_TEMP_DIR),
+        fastq_2 = expand("{path}/trimmed/{{sample}}_2_val_2.fq.gz", path=SCRATCH_TEMP_DIR),
+    output:
+        genBam = expand("{path}/mapped/{{sample}}Aligned.out.bam", path=SCRATCH_TEMP_DIR),
+        logTemp = expand("{path}/mapped/{{sample}}Log.final.out", path=SCRATCH_TEMP_DIR),
+        logFinal = expand("{path}/STAR/{{sample}}.Log.final.out", path=QC_DIR)
+    resources:
+        cpu = 8,
+        memPerCpu = 4000,
+        time = 120
+    threads: 8
+    conda: "../../../config/star_env.yml" # star version 2.7.9
+    params:
+        name = "{sample}",
+        stardir = STAR_GENOME,
+    shell:
+        """
+        STAR --runThreadN {threads} --genomeDir {params.stardir} \
+        --outFileNamePrefix {SCRATCH_TEMP_DIR}/mapped/{wildcards.sample} \
+        --readFilesCommand zcat --outSAMtype BAM Unsorted \
+        --outSAMunmapped Within --readFilesIn {input.fastq_1} {input.fastq_2}
+
+        cp {output.logTemp} {output.logFinal}
+        """
+
+rule clean_bam:
+    input:
+        expand("{path}/mapped/{{sample}}Aligned.out.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        expand("{path}/mapped/{{sample}}.bam", path=SCRATCH_TEMP_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 8000,
+        time = 240
+    conda: 
+        "../../../config/picard_env.yml" # version 2.16.0
+    shell:
+        """
+        picard CleanSam I={input} O={output}
+        """
+
+rule sort_bam:
+    input:
+        expand("{path}/mapped/{{sample}}.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        bam = expand("{path}/mapped/{{sample}}_sorted.bam", path=SCRATCH_TEMP_DIR),
+        bai = expand("{path}/mapped/{{sample}}_sorted.bam.bai", path=SCRATCH_TEMP_DIR)
+    resources:
+        cpu = 8,
+        memPerCpu = 2000,
+        time = 240
+    threads: 8
+    conda: 
+        "../../../config/samtools_env.yml" # version 1.9
+    shell:
+        """
+        samtools sort -o {output.bam} -@ {threads} {input}
+        samtools index {output.bam}
+        """
+
+rule mark_duplicates:
+    input:
+        bam = expand("{path}/mapped/{{sample}}_sorted.bam", path=SCRATCH_TEMP_DIR),
+    output:
+        bam = expand("{path}/mapped/{{sample}}_markdup.bam", path=SCRATCH_TEMP_DIR),
+        bai = expand("{path}/mapped/{{sample}}_markdup.bai", path=SCRATCH_TEMP_DIR),
+        txt = expand("{path}/markduplicates/{{sample}}.MarkDuplicates.txt", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 16000,
+        time = 240
+    params:
+        tmpdir =expand("{path}/temp/", path=SCRATCH_TEMP_DIR),
+    conda:
+        "../../../config/picard_env.yml" # version 2.16.0
+    shell:
+        """
+        picard '-Xms4g -Xmx12g' MarkDuplicates I={input.bam} O={output.bam} \
+        M={output.txt} CREATE_INDEX=true REMOVE_DUPLICATES=false \
+        TMP_DIR={params.tmpdir} ASSUME_SORT_ORDER=coordinate \
+        SORTING_COLLECTION_SIZE_RATIO=0.25 
+        """
+
+
+rule fastqc:
+    input:
+        fastq = expand("{path}/{{sample}}_{{end}}.fastq.gz", path=FASTQ_DIR),
+    output:
+        expand("{path}/fastqc/{{sample}}_{{end}}_fastqc.html", path=QC_DIR)
+    params:
+        out_dir = expand("{path}/fastqc", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 8000,
+        time = 60
+    conda:
+        "../../../config/fastqc_env.yml" # version 0.11.8
+    shell:
+        """
+        fastqc {input.fastq} -o {params.out_dir}
+        """
+
+rule fastq_screen:
+    input:
+        expand("{path}/{{sample}}_1.fastq.gz", path=FASTQ_DIR)
+    output:
+        expand("{path}/fastq_screen/{{sample}}_1_screen.html", path=QC_DIR)
+    params:
+        n_sequences = 1000000,
+        out_dir = expand("{path}/fastq_screen", path=QC_DIR),
+        fastq_screen_bin = config["tools"]["fastq_screen"] # version 0.15.2
+    resources:
+        cpu = 1,
+        memPerCpu = 8000,
+        time = 60
+    shell:
+        """
+        {params.fastq_screen_bin} {input} --outdir {params.out_dir} \
+        --subset {params.n_sequences} --force 
+        """
+
+rule picard_rna_metrics:
+    input:
+        expand("{path}/mapped/{{sample}}_markdup.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        expand("{path}/rnaMetrics/{{sample}}_CollectRnaSeqMetrics.txt", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 8000,
+        time = 60
+    params:
+        refflat = REF_FLAT,
+        rrna = RRNA_ANNOTATION,
+        strandedness = lambda wildcards: config["experiment_type_strand"][SAMPLES_STRAND[wildcards.sample]]
+    conda:
+        "../../../config/picard_env.yml" # version 2.16.0
+    shell:
+        """
+        if [ "{params.strandedness}" == "forward" ]; then
+            STRAND="FIRST_READ_TRANSCRIPTION_STRAND"
+        elif [ "{params.strandedness}" == "reverse" ]; then
+            STRAND="SECOND_READ_TRANSCRIPTION_STRAND"
+        fi
+
+        picard CollectRnaSeqMetrics I={input} O={output} \
+        REF_FLAT={params.refflat} RIBOSOMAL_INTERVALS={params.rrna} \
+        STRAND_SPECIFICITY=$STRAND RRNA_FRAGMENT_PERCENTAGE=0.001
+        """
+
+
+rule picard_insert_size:
+    input:
+        expand("{path}/mapped/{{sample}}_markdup.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        txt = expand("{path}/insert_size/{{sample}}_InserSizeMetrics.txt", path=QC_DIR),
+        hist = expand("{path}/insert_size/{{sample}}_histogram.pdf", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 8000,
+        time = 60
+    params:
+        rrna = RRNA_ANNOTATION
+    conda:
+        "../../../config/picard_env.yml"  # version 2.16.0
+    shell:
+        """
+        picard CollectInsertSizeMetrics I={input} O={output.txt} \
+        H={output.hist} \
+        """
+
+
+rule multiQC:
+    input:
+        FASTQC_OUT, FASTQ_SCREEN_OUT, MARKDUPLICATES_OUT, RNA_METRICS_OUT, INSERT_SIZE_OUT
+    output:
+        expand("{path}/multiqc_report.html", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 8000,
+        time = 30
+    params:
+        multiqc_bin = config["tools"]["multiqc"], # version 1.13
+        config = expand("{path}/config/multiqc_config.yaml", path=RNA_SEQ_DIR),
+        out_dir = QC_DIR
+    shell:
+        """
+        cd {params.out_dir}
+        {params.multiqc_bin} -c {params.config} -f .
+        """
+
+rule multiBamSummary_all_samples:
+    input:
+        expand("{path}/mapped/{sample}_markdup.bam", path=SCRATCH_TEMP_DIR, sample=RNASEQ_SAMPLES)
+    output:
+        expand("{path}/samples_correlation/multiBamSummary_all_samples_readCounts_{{line}}.npz", path=QC_DIR)
+    params:
+        bin_size = 10000,
+        min_map_quality = 20
+    resources:
+        cpu = 8,
+        memPerCpu = 4000,
+        time = 240
+    threads: 8
+    conda:
+        "../../../config/deeptools_env.yml" # version 3.5.0
+    shell:
+        """
+        multiBamSummary bins --bamfiles `ls {input} | grep {wildcards.line}` \
+        -o {output} --binSize {params.bin_size} --numberOfProcessors {threads} \
+        --extendReads --minMappingQuality {params.min_map_quality} \
+        --labels `ls {input} | grep {wildcards.line} | sed 's/_/\\t/g' \
+        | cut -f5- | sed 's/\\t/_/g; s/_mark.*//g' | tr "\\n" "\ "`
+        """
+
+rule plot_correlation_all_samples:
+    input:
+        expand("{path}/samples_correlation/multiBamSummary_all_samples_readCounts_{{line}}.npz", path=QC_DIR)
+    output:
+        scatter_pearson = expand("{path}/samples_correlation/multiBamSummary_all_samples_scatterplot_pearson_{{line}}.pdf", path=QC_DIR),
+        scatter_spearman = expand("{path}/samples_correlation/multiBamSummary_all_samples_scatterplot_spearman_{{line}}.pdf", path=QC_DIR),
+        heatmap = expand("{path}/samples_correlation/multiBamSummary_all_samples_heatmap_{{line}}.pdf", path=QC_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 8000,
+        time = 60
+    conda:
+        "../../../config/deeptools_env.yml" # version 3.5.0
+    shell:
+        """
+        plotCorrelation --corData {input} --plotFile {output.scatter_pearson} --corMethod pearson \
+        --removeOutliers --whatToPlot scatterplot --plotFileFormat pdf 
+
+        plotCorrelation --corData {input} --plotFile {output.scatter_spearman} --corMethod spearman \
+        --removeOutliers --whatToPlot scatterplot --plotFileFormat pdf 
+        
+        plotCorrelation --corData {input} --plotFile {output.heatmap} --corMethod pearson \
+        --removeOutliers --whatToPlot heatmap --plotFileFormat pdf --plotNumbers --zMin 0.5
+        """
+
+
+rule create_bigwigs:
+    input:
+        expand("{path}/mapped/{{sample}}_markdup.bam", path=SCRATCH_TEMP_DIR)
+    output:
+        expand("{path}/{{sample}}_RPKM.bw", path=BIGWIG_DIR)
+    params:
+        bin_size = 10,
+        method = "RPKM",
+        effective_genome_size = 125464728
+    resources:
+        cpu = 1,
+        memPerCpu = 16000,
+        time = 240
+    conda:
+        "../../../config/deeptools_env.yml" # version 3.5.0
+    shell:
+        """
+        bamCoverage --bam {input} --outFileName {output} --outFileFormat bigwig \
+        --binSize {params.bin_size} --normalizeUsing {params.method} \
+        --effectiveGenomeSize {params.effective_genome_size} \
+        --exactScaling --ignoreForNormalization chrX chrM
+        """
+
+rule merge_replicates_bigwigs:
+    input:
+        rep1 = lambda wildcards: expand("{path}/{sample}_RPKM.bw", path=BIGWIG_DIR, sample=config["RNA-Seq"][wildcards.line][wildcards.condition][0]),
+        rep2 = lambda wildcards: expand("{path}/{sample}_RPKM.bw", path=BIGWIG_DIR, sample=config["RNA-Seq"][wildcards.line][wildcards.condition][1])     
+    output:
+        expand("{path}/{{line}}_{{condition}}_MeanRep_RPKM.bw", path=BIGWIG_DIR)
+    params:
+        bin_size = 10
+    resources:
+        cpu = 1,
+        memPerCpu = 16000,
+        time = 240
+    conda:
+        "../../../config/deeptools_env.yml" # version 3.5.0
+    shell:
+        """
+        bigwigCompare --bigwig1 {input.rep1} --bigwig2 {input.rep2} \
+        --binSize {params.bin_size} --operation mean --outFileName {output}
+        """

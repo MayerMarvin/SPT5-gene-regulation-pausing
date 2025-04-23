@@ -1,0 +1,154 @@
+import pandas as pd
+configfile: "../../../config/Depletion_CUTnTag_config.yml"
+
+
+# Variables
+CUTnTAG_LINES = list(set(config["CUTnTag_samples"].keys()))
+CUTnTAG_ANTIBODIES = list(set([antibody for line in CUTnTAG_LINES for antibody in list(config["CUTnTag_samples"][line].keys())]))
+CUTnTAG_SAMPLES = [sample for line, antibody, condition in CUTnTAG_LINE_ANTIBODY_CONDITIONS for sample in config["CUTnTag_samples"][line][antibody][condition]]
+SPECIES =  [item for sublist in [config["species"]] for item in sublist]
+MAX_INSERT_SIZE = config["parameters_peak_calling"]["filter_bam_for_peak_calling"]["max_fragment_length"]
+
+
+# Paths
+CONFIG_DIR = config["global"]["config_dir"]
+ENVS_DIR = config["global"]["envs_dir"]
+PROJECT_DIR = config["global"]["project_dir"]
+BAM_DIR = PROJECT_DIR + config["global"]["bam_dir"]
+MACS2_DIR = PROJECT_DIR + config["global"]["macs2_dir"]
+IDR_DIR = PROJECT_DIR + config["global"]["idr_dir"]
+
+# Targets
+## Peak calling
+FILTERED_BAM_OUT = expand("{path}/insert_size_filtered/{sample}_filtered_{species}_max_insert_size_{insert_size}.bam", path=BAM_DIR, sample=CUTnTAG_SAMPLES, species=SPECIES, insert_size=MAX_INSERT_SIZE)
+MACS2_FOR_IDR_OUT = expand("{path}/{species}/{sample}_macs2_loose_summits.bed", path=MACS2_DIR, sample=CUTnTAG_SAMPLES, species=SPECIES)
+EXPANDED_SUMMITS_OUT = expand("{path}/{species}/{sample}_macs2_loose_summits_expanded.bed", path=MACS2_DIR, sample=CUTnTAG_SAMPLES, species=SPECIES)
+IDR_OUT = [IDR_DIR + "/" + species + "/" + line + "." + condition + "." + antibody + "_IDR_peaks.bed" for species in SPECIES for line, antibody, condition in CUTnTAG_LINE_ANTIBODY_CONDITIONS_REPS]
+EXPAND_IDR_OUT = [IDR_DIR + "/" + species + "/" + line + "." + condition + "." + antibody + "_IDR_peaks_expanded.bed" for species in SPECIES for line, antibody, condition in CUTnTAG_LINE_ANTIBODY_CONDITIONS_REPS]
+PEAK_CALLING_PIPELINE_OUT = FILTERED_BAM_OUT + MACS2_FOR_IDR_OUT + EXPANDED_SUMMITS_OUT + IDR_OUT + EXPAND_IDR_OUT
+
+
+rule all:
+    input:
+        PEAK_CALLING_PIPELINE_OUT
+
+
+
+rule subset_bam_by_insert_size:
+    input:
+        expand("{path}/{{sample}}_filtered_{{species}}.bam", path=BAM_DIR)
+    output:
+        expand("{path}/insert_size_filtered/{{sample}}_filtered_{{species}}_max_insert_size_{{insert_size}}.bam", path=BAM_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 8000,
+        time = 120
+    params:
+        max_fragment_length = "{insert_size}",
+    conda: ENVS_DIR + "/samtools_env.yml" # version 1.16.1
+    shell:
+        """
+        samtools view -h {input} | awk 'substr($0,1,1) == "@" \
+        || (sqrt($9^2) > 0 && sqrt($9^2) <= {params.max_fragment_length})' \
+        | samtools view -b  - > {output}
+
+        samtools index {output}
+        """
+
+rule MACS2_for_IDR_all_reads:
+    input:
+        test = expand("{path}/insert_size_filtered/{{sample}}_filtered_{{species}}_max_insert_size_{insert_size}.bam", path=BAM_DIR, insert_size=MAX_INSERT_SIZE)
+    output:
+        final = expand("{path}/{{species}}/{{sample}}_macs2_loose_peaks.narrowPeak", path=MACS2_DIR),
+        summits = expand("{path}/{{species}}/{{sample}}_macs2_loose_summits.bed", path=MACS2_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 8000,
+        time = 120
+    params:
+        genome_size = config["parameters_peak_calling"]["macs2"]["genome_size"],
+        p_value_cutoff = config["parameters_peak_calling"]["macs2"]["p_value_cutoff"],
+        input_format = config["parameters_peak_calling"]["macs2"]["input_format"],
+        out_dir = MACS2_DIR + "/{species}"
+    conda: ENVS_DIR + "/macs2_env.yml" # version 2.2.7.1
+    shell:
+        """
+        mkdir -p {MACS2_DIR}
+        mkdir -p {params.out_dir}
+
+        macs2 callpeak -t {input.test} -g {params.genome_size} \
+        -p {params.p_value_cutoff} -f {params.input_format} \
+        --call-summits --outdir {params.out_dir} \
+        -n {wildcards.sample}_macs2_loose
+        """
+
+rule expand_summits:
+    input:
+        expand("{path}/{{species}}/{{sample}}_macs2_loose_summits.bed", path=MACS2_DIR)
+    output:
+        expand("{path}/{{species}}/{{sample}}_macs2_loose_summits_expanded.bed", path=MACS2_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 1000,
+        time = 10
+    params:
+        expand_summit = config["parameters_peak_calling"]["macs2_peak_expansion"]["size"]
+    shell:
+        """
+        cat {input} | awk '{{OFS="\\t"}} {{$2=($2-{params.expand_summit}); $3=($3+{params.expand_summit}); \
+        print $1, $2, $3, $4 "\\t0\\t.\\t" $5 "\\t1\\t1\\t0"}}' | sed 's/-[0-9]*/0/g' | sort -k7,7gr > {output}
+        """
+
+
+rule IDR_replicates:
+    input:
+        macs2_rep1 = lambda wildcards: expand("{path}/{{species}}/{sample}_macs2_loose_summits_expanded.bed", path=MACS2_DIR, sample=[config["CUTnTag_samples"][wildcards.line][wildcards.antibody][wildcards.condition][0]]),
+        macs2_rep2 = lambda wildcards: expand("{path}/{{species}}/{sample}_macs2_loose_summits_expanded.bed", path=MACS2_DIR, sample=[config["CUTnTag_samples"][wildcards.line][wildcards.antibody][wildcards.condition][1]])
+    output:
+        expand("{path}/{{species}}/{{line}}.{{condition}}.{{antibody}}_IDR_peaks.bed", path=IDR_DIR)
+    resources:
+        cpu = 1,
+        memPerCpu = 4000,
+        time = 60
+    params:
+        IDR_cutoff = config["parameters_peak_calling"]["IDR"]["IDR_cutoff"],
+        out_dir = IDR_DIR + "/{species}"
+    conda: ENVS_DIR + "/idr_env.yml" # 2.0.4.2
+    shell:
+        """        
+        mkdir -p {IDR_DIR}
+        mkdir -p {params.out_dir}
+
+        idr --input-file-type narrowPeak --rank signal.value --plot \
+        --samples {input.macs2_rep1} {input.macs2_rep2} \
+        -i {params.IDR_cutoff} --use-best-multisummit-IDR \
+        --output-file {output}
+        """
+
+
+rule expand_IDR_peaks:
+    input:
+        expand("{path}/{{species}}/{{line}}.{{condition}}.{{antibody}}_IDR_peaks.bed", path=IDR_DIR)
+    output:
+        expand("{path}/{{species}}/{{line}}.{{condition}}.{{antibody}}_IDR_peaks_expanded.bed", path=IDR_DIR)
+    params:
+        peak_expansion = config["parameters_peak_calling"]["idr_peak_expansion"]["size"],
+        expand_peaks_bin = config["tools"]["expand_peaks"]
+    resources:
+        cpu = 1,
+        memPerCpu = 1000,
+        time = 10
+    shell:
+        """
+        cat {input} | awk '{{C=int(($2+$3)/2); print $1 "\\t" $2 "\\t" $3 "\\t" $1 "_" C "\\t" C}}' \
+        | sort -k1,1 -k2,2g | {params.expand_peaks_bin} {params.peak_expansion} \
+        | cut -f1-4 | sed 's/-[0-9]*/0/g' | sort -k1,1 -k2,2g > {output}
+        """
+
+
+
+# Create log directory for each rule
+for rule in workflow._rules:
+    path = "logs/{rule}".format(rule=rule)
+    if not os.path.isdir(path):
+        os.makedirs(path)
