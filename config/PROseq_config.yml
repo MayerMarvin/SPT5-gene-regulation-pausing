@@ -1,0 +1,49 @@
+fastq:     
+  PROseq_34h_dark_rep1: /g/furlong/project/92_SPT4_SPT5/PROseq/data/fastq_01042025/PROseq_34h_dark_rep1.fastq.gz
+  PROseq_34h_dark_rep2: /g/furlong/project/92_SPT4_SPT5/PROseq/data/fastq_01042025/PROseq_34h_dark_rep2.fastq.gz
+  PROseq_34h_BL1h_rep1: /g/furlong/project/92_SPT4_SPT5/PROseq/data/fastq_01042025/PROseq_34h_BL1h_rep1.fastq.gz
+  PROseq_34h_BL1h_rep2: /g/furlong/project/92_SPT4_SPT5/PROseq/data/fastq_01042025/PROseq_34h_BL1h_rep2.fastq.gz
+  PROseq_34h_BL3h_rep1: /g/furlong/project/92_SPT4_SPT5/PROseq/data/fastq_01042025/PROseq_34h_BL3h_rep1.fastq.gz
+  PROseq_34h_BL3h_rep2: /g/furlong/project/92_SPT4_SPT5/PROseq/data/fastq_01042025/PROseq_34h_BL3h_rep2.fastq.gz
+  PROseq_1820h_dark_rep1: /g/furlong/project/92_SPT4_SPT5/PROseq/data/fastq_01042025/PROseq_1820h_dark_rep1.fastq.gz
+  PROseq_1820h_dark_rep2: /g/furlong/project/92_SPT4_SPT5/PROseq/data/fastq_01042025/PROseq_1820h_dark_rep2.fastq.gz
+  PROseq_1820h_BL2h_rep1: /g/furlong/project/92_SPT4_SPT5/PROseq/data/fastq_01042025/PROseq_1820h_BL2h_rep1.fastq.gz
+  PROseq_1820h_BL2h_rep2: /g/furlong/project/92_SPT4_SPT5/PROseq/data/fastq_01042025/PROseq_1820h_BL2h_rep2.fastq.gz
+  # PROseq_34h_WT: /g/furlong/project/92_SPT4_SPT5/PROseq/data/fastq_WT/PROseq_test2_R1.fastq.gz
+  # PROseq_1820h_WT: /g/furlong/project/92_SPT4_SPT5/PROseq/data/fastq_WT/PROseq_test3_R1.fastq.gz 
+
+
+tmpdir:
+    /scratch/dulja/PROseq/paper
+envdir:
+    /g/furlong/project/92_SPT4_SPT5/PROseq/env/
+fastq_dir:
+    /g/furlong/project/92_SPT4_SPT5/PROseq/data/
+
+bw_dir:
+    /g/furlong/project/92_SPT4_SPT5/PROseq/data/paper/
+config_dir:
+    /g/furlong/project/92_SPT4_SPT5/PROseq/data/
+
+trimming:
+    minbaseq:
+        10
+    min_length:
+        20
+
+bigwigs:
+    binsize:
+        1
+    dmel_size:
+        142573017 
+
+   
+annotation:
+  rrna: /g/furlong/genome/D.melanogaster/Dm6/6.13/indices/STAR_RSEM/annotation/dmel-single-strand-ucsc-seqname.r6.13.rRNA.interval_list
+  refflat: /g/furlong/genome/D.melanogaster/Dm6/6.13/indices/STAR_RSEM/annotation/dmel-single-strand-ucsc-seqname.r6.13.exon.ref_flat
+
+
+parameters_mapping:
+  fastq_screen:
+    n_sequences: 1000000      # Numer of reads sampled from fastq files
+    aligner: bowtie2          # aligner for fastq_screen (default bowtie2, other alignments require installation in config/fastq_screen.conf)
