@@ -59,9 +59,11 @@ The repository is structured to ensure transparency, reusability, and reproducib
 
 
 ## Authors and acknowledgment
-This repository was developed as part of the SPT5-iLEXY project, which was initially conceptualized and led by **Niklas Engel** and **Mattia Forneris**.
+This repository was developed as part of the SPT5-iLEXY project.
 
-**Marvin Mayer** was responsible for the complete implementation, optimization, and documentation of all analysis pipelines, including the integration of parameter settings, workflow modularization, and reproducibility across experiments.
+**Mattia Forneris** was responsible for the development of the foundational analysis pipelines and pre-processing steps, which served as the basis for the subsequent work.
+
+**Marvin Mayer** was responsible for the full-scale implementation, parameter optimization, and comprehensive documentation of the analysis workflows. He carried out the data analysis and visualizations used in the figures, with input from **Niklas Engel**. He created this GitHub repository to ensure the project's accessibility and reproducibility.
 
 We thank all members of the Furlong Lab for helpful discussions and support throughout the project.
 
