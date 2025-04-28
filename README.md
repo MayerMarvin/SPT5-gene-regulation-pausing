@@ -15,7 +15,7 @@ Thank you for your understanding.
 
 
 ## Bioinformatics Pipelines & Analysis Scripts for the SPT5-iLEXY Study
-This repository contains all code, pipelines, and analysis scripts used for the SPT5-iLEXY study (currently available as a preprint). It serves as a comprehensive and reproducible framework for processing and visualizing high-throughput sequencing data generated during the project.
+This repository contains all code, pipelines, and analysis scripts used for the SPT5-iLEXY study. It serves as a comprehensive and reproducible framework for processing and visualizing high-throughput sequencing data generated during the project.
 
 Included are:
 
